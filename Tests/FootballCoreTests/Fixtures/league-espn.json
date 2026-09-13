@@ -1,0 +1,619 @@
+{
+ "id": 1,
+ "seasonId": 2026,
+ "scoringPeriodId": 1,
+ "status": {
+  "currentMatchupPeriod": 1,
+  "latestScoringPeriod": 1
+ },
+ "settings": {
+  "name": "Test League"
+ },
+ "members": [
+  {
+   "id": "{AAAA-0001-0000-0000-000000000001}",
+   "displayName": "member1"
+  },
+  {
+   "id": "{BBBB-0002-0000-0000-000000000002}",
+   "displayName": "member2"
+  }
+ ],
+ "teams": [
+  {
+   "id": 13,
+   "abbrev": "OOT",
+   "name": "Their Team",
+   "owners": [
+    "{BBBB-0002-0000-0000-000000000002}"
+   ],
+   "roster": {
+    "appliedStatTotal": 13.02,
+    "entries": [
+     {
+      "lineupSlotId": 2,
+      "playerId": 4429160,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4429160,
+        "fullName": "De'Von Achane",
+        "firstName": "De'Von",
+        "lastName": "Achane",
+        "defaultPositionId": 2,
+        "proTeamId": 15
+       }
+      }
+     },
+     {
+      "lineupSlotId": 2,
+      "playerId": 4870808,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4870808,
+        "fullName": "Jeremiyah Love",
+        "firstName": "Jeremiyah",
+        "lastName": "Love",
+        "defaultPositionId": 2,
+        "proTeamId": 22
+       }
+      }
+     },
+     {
+      "lineupSlotId": 4,
+      "playerId": 4569618,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4569618,
+        "fullName": "Garrett Wilson",
+        "firstName": "Garrett",
+        "lastName": "Wilson",
+        "defaultPositionId": 3,
+        "proTeamId": 20
+       }
+      }
+     },
+     {
+      "lineupSlotId": 4,
+      "playerId": 4685472,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4685472,
+        "fullName": "Tetairoa McMillan",
+        "firstName": "Tetairoa",
+        "lastName": "McMillan",
+        "defaultPositionId": 3,
+        "proTeamId": 29
+       }
+      }
+     },
+     {
+      "lineupSlotId": 23,
+      "playerId": 4685278,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4685278,
+        "fullName": "Luther Burden III",
+        "firstName": "Luther",
+        "lastName": "Burden III",
+        "defaultPositionId": 3,
+        "proTeamId": 3
+       }
+      }
+     },
+     {
+      "lineupSlotId": 0,
+      "playerId": 4431452,
+      "playerPoolEntry": {
+       "appliedStatTotal": 9.82,
+       "player": {
+        "id": 4431452,
+        "fullName": "Drake Maye",
+        "firstName": "Drake",
+        "lastName": "Maye",
+        "defaultPositionId": 1,
+        "proTeamId": 17
+       }
+      }
+     },
+     {
+      "lineupSlotId": 20,
+      "playerId": 4360078,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4360078,
+        "fullName": "Alec Pierce",
+        "firstName": "Alec",
+        "lastName": "Pierce",
+        "defaultPositionId": 3,
+        "proTeamId": 11
+       }
+      }
+     },
+     {
+      "lineupSlotId": 6,
+      "playerId": 3040151,
+      "playerPoolEntry": {
+       "appliedStatTotal": 3.2,
+       "player": {
+        "id": 3040151,
+        "fullName": "George Kittle",
+        "firstName": "George",
+        "lastName": "Kittle",
+        "defaultPositionId": 4,
+        "proTeamId": 25
+       }
+      }
+     },
+     {
+      "lineupSlotId": 20,
+      "playerId": 4685415,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4685415,
+        "fullName": "Travis Hunter",
+        "firstName": "Travis",
+        "lastName": "Hunter",
+        "defaultPositionId": 3,
+        "proTeamId": 30
+       }
+      }
+     },
+     {
+      "lineupSlotId": 20,
+      "playerId": 4373678,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4373678,
+        "fullName": "Khalil Shakir",
+        "firstName": "Khalil",
+        "lastName": "Shakir",
+        "defaultPositionId": 3,
+        "proTeamId": 2
+       }
+      }
+     },
+     {
+      "lineupSlotId": 20,
+      "playerId": 5083315,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 5083315,
+        "fullName": "Kenyon Sadiq",
+        "firstName": "Kenyon",
+        "lastName": "Sadiq",
+        "defaultPositionId": 4,
+        "proTeamId": 20
+       }
+      }
+     },
+     {
+      "lineupSlotId": 20,
+      "playerId": 4429096,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4429096,
+        "fullName": "Blake Corum",
+        "firstName": "Blake",
+        "lastName": "Corum",
+        "defaultPositionId": 2,
+        "proTeamId": 14
+       }
+      }
+     },
+     {
+      "lineupSlotId": 20,
+      "playerId": 4362619,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4362619,
+        "fullName": "Chris Rodriguez Jr.",
+        "firstName": "Chris",
+        "lastName": "Rodriguez Jr.",
+        "defaultPositionId": 2,
+        "proTeamId": 30
+       }
+      }
+     },
+     {
+      "lineupSlotId": 20,
+      "playerId": 4241474,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4241474,
+        "fullName": "Brian Robinson Jr.",
+        "firstName": "Brian",
+        "lastName": "Robinson Jr.",
+        "defaultPositionId": 2,
+        "proTeamId": 1
+       }
+      }
+     },
+     {
+      "lineupSlotId": 16,
+      "playerId": -16005,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": -16005,
+        "fullName": "Browns D/ST",
+        "firstName": "Browns",
+        "lastName": "D/ST",
+        "defaultPositionId": 16,
+        "proTeamId": 5
+       }
+      }
+     },
+     {
+      "lineupSlotId": 17,
+      "playerId": 17427,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 17427,
+        "fullName": "Cairo Santos",
+        "firstName": "Cairo",
+        "lastName": "Santos",
+        "defaultPositionId": 5,
+        "proTeamId": 3
+       }
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": 15,
+   "abbrev": "VST",
+   "name": "My Team",
+   "owners": [
+    "{AAAA-0001-0000-0000-000000000001}"
+   ],
+   "roster": {
+    "appliedStatTotal": 0.0,
+    "entries": [
+     {
+      "lineupSlotId": 2,
+      "playerId": 4379399,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4379399,
+        "fullName": "James Cook III",
+        "firstName": "James",
+        "lastName": "Cook III",
+        "defaultPositionId": 2,
+        "proTeamId": 2
+       }
+      }
+     },
+     {
+      "lineupSlotId": 0,
+      "playerId": 4426348,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4426348,
+        "fullName": "Jayden Daniels",
+        "firstName": "Jayden",
+        "lastName": "Daniels",
+        "defaultPositionId": 1,
+        "proTeamId": 28
+       }
+      }
+     },
+     {
+      "lineupSlotId": 6,
+      "playerId": 4430027,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4430027,
+        "fullName": "Sam LaPorta",
+        "firstName": "Sam",
+        "lastName": "LaPorta",
+        "defaultPositionId": 4,
+        "proTeamId": 8
+       }
+      }
+     },
+     {
+      "lineupSlotId": 20,
+      "playerId": 3116165,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 3116165,
+        "fullName": "Chris Godwin Jr.",
+        "firstName": "Chris",
+        "lastName": "Godwin Jr.",
+        "defaultPositionId": 3,
+        "proTeamId": 27
+       }
+      }
+     },
+     {
+      "lineupSlotId": 21,
+      "playerId": 4877706,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4877706,
+        "fullName": "Jayden Higgins",
+        "firstName": "Jayden",
+        "lastName": "Higgins",
+        "defaultPositionId": 3,
+        "proTeamId": 34
+       }
+      }
+     },
+     {
+      "lineupSlotId": 20,
+      "playerId": 4429013,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4429013,
+        "fullName": "Tank Bigsby",
+        "firstName": "Tank",
+        "lastName": "Bigsby",
+        "defaultPositionId": 2,
+        "proTeamId": 21
+       }
+      }
+     },
+     {
+      "lineupSlotId": 23,
+      "playerId": 4432620,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4432620,
+        "fullName": "Parker Washington",
+        "firstName": "Parker",
+        "lastName": "Washington",
+        "defaultPositionId": 3,
+        "proTeamId": 30
+       }
+      }
+     },
+     {
+      "lineupSlotId": 20,
+      "playerId": 12483,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.16,
+       "player": {
+        "id": 12483,
+        "fullName": "Matthew Stafford",
+        "firstName": "Matthew",
+        "lastName": "Stafford",
+        "defaultPositionId": 1,
+        "proTeamId": 14
+       }
+      }
+     },
+     {
+      "lineupSlotId": 20,
+      "playerId": 3150744,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 3150744,
+        "fullName": "Chase McLaughlin",
+        "firstName": "Chase",
+        "lastName": "McLaughlin",
+        "defaultPositionId": 5,
+        "proTeamId": 27
+       }
+      }
+     },
+     {
+      "lineupSlotId": 20,
+      "playerId": 4361411,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4361411,
+        "fullName": "Pat Freiermuth",
+        "firstName": "Pat",
+        "lastName": "Freiermuth",
+        "defaultPositionId": 4,
+        "proTeamId": 23
+       }
+      }
+     },
+     {
+      "lineupSlotId": 4,
+      "playerId": 4372016,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4372016,
+        "fullName": "Jaylen Waddle",
+        "firstName": "Jaylen",
+        "lastName": "Waddle",
+        "defaultPositionId": 3,
+        "proTeamId": 7
+       }
+      }
+     },
+     {
+      "lineupSlotId": 4,
+      "playerId": 16800,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 16800,
+        "fullName": "Davante Adams",
+        "firstName": "Davante",
+        "lastName": "Adams",
+        "defaultPositionId": 3,
+        "proTeamId": 14
+       }
+      }
+     },
+     {
+      "lineupSlotId": 16,
+      "playerId": -16007,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": -16007,
+        "fullName": "Broncos D/ST",
+        "firstName": "Broncos",
+        "lastName": "D/ST",
+        "defaultPositionId": 16,
+        "proTeamId": 7
+       }
+      }
+     },
+     {
+      "lineupSlotId": 17,
+      "playerId": 3953687,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 3953687,
+        "fullName": "Brandon Aubrey",
+        "firstName": "Brandon",
+        "lastName": "Aubrey",
+        "defaultPositionId": 5,
+        "proTeamId": 6
+       }
+      }
+     },
+     {
+      "lineupSlotId": 20,
+      "playerId": 4432710,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4432710,
+        "fullName": "TreVeyon Henderson",
+        "firstName": "TreVeyon",
+        "lastName": "Henderson",
+        "defaultPositionId": 2,
+        "proTeamId": 17
+       }
+      }
+     },
+     {
+      "lineupSlotId": 20,
+      "playerId": 4432773,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4432773,
+        "fullName": "Brian Thomas Jr.",
+        "firstName": "Brian",
+        "lastName": "Thomas Jr.",
+        "defaultPositionId": 3,
+        "proTeamId": 30
+       }
+      }
+     },
+     {
+      "lineupSlotId": 2,
+      "playerId": 4696981,
+      "playerPoolEntry": {
+       "appliedStatTotal": 0.0,
+       "player": {
+        "id": 4696981,
+        "fullName": "Cam Skattebo",
+        "firstName": "Cam",
+        "lastName": "Skattebo",
+        "defaultPositionId": 2,
+        "proTeamId": 19
+       }
+      }
+     }
+    ]
+   }
+  }
+ ],
+ "schedule": [
+  {
+   "id": 1,
+   "matchupPeriodId": 1,
+   "home": {
+    "teamId": 13,
+    "totalPoints": 0.0,
+    "totalPointsLive": 13.02,
+    "rosterForCurrentScoringPeriod": {
+     "appliedStatTotal": 13.02,
+     "entries": [
+      {
+       "lineupSlotId": 2,
+       "playerPoolEntry": {
+        "player": {}
+       }
+      },
+      {
+       "lineupSlotId": 2,
+       "playerPoolEntry": {
+        "player": {}
+       }
+      },
+      {
+       "lineupSlotId": 4,
+       "playerPoolEntry": {
+        "player": {}
+       }
+      },
+      {
+       "lineupSlotId": 4,
+       "playerPoolEntry": {
+        "player": {}
+       }
+      }
+     ]
+    }
+   },
+   "away": {
+    "teamId": 15,
+    "totalPoints": 0.0,
+    "totalPointsLive": 0.0,
+    "rosterForCurrentScoringPeriod": {
+     "appliedStatTotal": 0.0,
+     "entries": [
+      {
+       "lineupSlotId": 2,
+       "playerPoolEntry": {
+        "player": {}
+       }
+      },
+      {
+       "lineupSlotId": 0,
+       "playerPoolEntry": {
+        "player": {}
+       }
+      },
+      {
+       "lineupSlotId": 6,
+       "playerPoolEntry": {
+        "player": {}
+       }
+      },
+      {
+       "lineupSlotId": 20,
+       "playerPoolEntry": {
+        "player": {}
+       }
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

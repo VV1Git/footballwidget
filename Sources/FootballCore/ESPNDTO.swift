@@ -1,0 +1,219 @@
+import Foundation
+
+// Wire types for ESPN's public (undocumented) NFL endpoints.
+//
+// Everything is optional on purpose. These payloads are not a contract — fields come
+// and go depending on whether a game is scheduled, live, at halftime or final, and
+// ESPN reshapes them without notice. Decoding must never throw over a missing key;
+// the UI degrades instead.
+
+/// Decodes an element, or yields `nil` instead of throwing.
+///
+/// Used for array elements so that one malformed game or play cannot take down the
+/// whole slate. ESPN genuinely does reshape fields between endpoints — `broadcasts.market`
+/// is a `String` on the scoreboard and an object on the summary — so all-or-nothing
+/// decoding is not safe here.
+public struct Failable<T: Decodable & Sendable>: Decodable, Sendable {
+    public let value: T?
+    public init(from decoder: Decoder) throws {
+        value = try? T(from: decoder)
+    }
+}
+
+public extension Array {
+    /// Drops the elements that failed to decode.
+    func compacted<T>() -> [T] where Element == Failable<T> {
+        compactMap(\.value)
+    }
+}
+
+// MARK: - Shared
+
+public struct ESPNTeamDTO: Decodable, Sendable {
+    public var id: String?
+    public var abbreviation: String?
+    public var displayName: String?
+    public var shortDisplayName: String?
+    public var location: String?
+    public var name: String?
+    public var color: String?
+    public var alternateColor: String?
+    public var logo: String?
+}
+
+public struct ESPNRecordDTO: Decodable, Sendable {
+    public var type: String?
+    public var summary: String?
+}
+
+public struct ESPNStatusTypeDTO: Decodable, Sendable {
+    public var id: String?
+    public var name: String?
+    public var state: String?       // "pre" | "in" | "post"
+    public var completed: Bool?
+    public var description: String?
+    public var detail: String?
+    public var shortDetail: String?
+}
+
+public struct ESPNStatusDTO: Decodable, Sendable {
+    public var clock: Double?
+    public var displayClock: String?
+    public var period: Int?
+    public var type: ESPNStatusTypeDTO?
+}
+
+// MARK: - Scoreboard
+
+public struct ESPNScoreboardDTO: Decodable, Sendable {
+    public var events: [Failable<ESPNEventDTO>]?
+}
+
+public struct ESPNEventDTO: Decodable, Sendable {
+    public var id: String?
+    public var date: String?
+    public var name: String?
+    public var shortName: String?
+    public var status: ESPNStatusDTO?
+    public var competitions: [Failable<ESPNCompetitionDTO>]?
+}
+
+public struct ESPNCompetitionDTO: Decodable, Sendable {
+    public var id: String?
+    public var date: String?
+    public var status: ESPNStatusDTO?
+    public var competitors: [Failable<ESPNCompetitorDTO>]?
+    public var situation: ESPNSituationDTO?
+    public var broadcasts: [ESPNBroadcastDTO]?
+    public var venue: ESPNVenueDTO?
+}
+
+public struct ESPNBroadcastDTO: Decodable, Sendable {
+    public var names: [String]?
+}
+
+public struct ESPNVenueDTO: Decodable, Sendable {
+    public var fullName: String?
+}
+
+public struct ESPNCompetitorDTO: Decodable, Sendable {
+    public var id: String?
+    public var homeAway: String?
+    /// Scoreboard sends this as a *string* ("17"), unlike the play feed which uses Int.
+    public var score: String?
+    public var winner: Bool?
+    public var team: ESPNTeamDTO?
+    public var records: [ESPNRecordDTO]?
+}
+
+public struct ESPNSituationDTO: Decodable, Sendable {
+    public var down: Int?
+    public var distance: Int?
+    public var yardLine: Int?
+    public var downDistanceText: String?
+    public var shortDownDistanceText: String?
+    public var possessionText: String?
+    public var isRedZone: Bool?
+    public var homeTimeouts: Int?
+    public var awayTimeouts: Int?
+    /// Team id currently in possession.
+    public var possession: String?
+    public var lastPlay: ESPNPlayDTO?
+}
+
+// MARK: - Summary (drives + play by play)
+
+public struct ESPNSummaryDTO: Decodable, Sendable {
+    public var drives: ESPNDrivesDTO?
+    public var scoringPlays: [Failable<ESPNScoringPlayDTO>]?
+}
+
+public struct ESPNDrivesDTO: Decodable, Sendable {
+    public var current: ESPNDriveDTO?
+    public var previous: [Failable<ESPNDriveDTO>]?
+}
+
+public struct ESPNDriveDTO: Decodable, Sendable {
+    public var id: String?
+    public var description: String?
+    public var displayResult: String?
+    public var shortDisplayResult: String?
+    public var result: String?
+    public var isScore: Bool?
+    public var yards: Int?
+    public var offensivePlays: Int?
+    public var timeElapsed: ESPNClockDTO?
+    public var team: ESPNTeamDTO?
+    public var start: ESPNDriveEndpointDTO?
+    public var end: ESPNDriveEndpointDTO?
+    public var plays: [Failable<ESPNPlayDTO>]?
+}
+
+public struct ESPNDriveEndpointDTO: Decodable, Sendable {
+    public var period: ESPNPeriodDTO?
+    public var clock: ESPNClockDTO?
+    public var yardLine: Int?
+    public var text: String?
+}
+
+public struct ESPNPeriodDTO: Decodable, Sendable {
+    public var number: Int?
+}
+
+public struct ESPNClockDTO: Decodable, Sendable {
+    public var value: Double?
+    public var displayValue: String?
+}
+
+public struct ESPNPlayTypeDTO: Decodable, Sendable {
+    public var id: String?
+    public var text: String?
+    public var abbreviation: String?
+}
+
+public struct ESPNPlayDTO: Decodable, Sendable {
+    public var id: String?
+    public var sequenceNumber: String?
+    public var type: ESPNPlayTypeDTO?
+    public var text: String?
+    public var shortText: String?
+    /// Play feed uses Int scores, unlike the scoreboard's strings.
+    public var awayScore: Int?
+    public var homeScore: Int?
+    public var period: ESPNPeriodDTO?
+    public var clock: ESPNClockDTO?
+    public var scoringPlay: Bool?
+    public var isPenalty: Bool?
+    public var isTurnover: Bool?
+    public var statYardage: Int?
+    public var start: ESPNPlayNodeDTO?
+    public var end: ESPNPlayNodeDTO?
+}
+
+/// One end of a play. `team` says whose frame `yardsToEndzone` is measured in, and it
+/// is *not* always the team on offense — it flips on kickoffs and turnover returns.
+public struct ESPNPlayNodeDTO: Decodable, Sendable {
+    public var down: Int?
+    public var distance: Int?
+    public var yardLine: Int?
+    public var yardsToEndzone: Int?
+    public var downDistanceText: String?
+    public var shortDownDistanceText: String?
+    public var possessionText: String?
+    public var team: ESPNTeamRefDTO?
+}
+
+public struct ESPNTeamRefDTO: Decodable, Sendable {
+    public var id: String?
+}
+
+public struct ESPNScoringPlayDTO: Decodable, Sendable {
+    public var id: String?
+    public var type: ESPNPlayTypeDTO?
+    public var text: String?
+    public var awayScore: Int?
+    public var homeScore: Int?
+    public var period: ESPNPeriodDTO?
+    public var clock: ESPNClockDTO?
+    public var team: ESPNTeamDTO?
+}

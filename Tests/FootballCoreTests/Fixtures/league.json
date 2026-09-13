@@ -1,0 +1,317 @@
+{
+ "id": 123456,
+ "seasonId": 2026,
+ "scoringPeriodId": 1,
+ "status": {
+  "currentMatchupPeriod": 1,
+  "latestScoringPeriod": 1
+ },
+ "settings": {
+  "name": "Sunday Scaries"
+ },
+ "members": [
+  {
+   "id": "{AAAA-1111}",
+   "displayName": "vedant",
+   "firstName": "V",
+   "lastName": "K"
+  },
+  {
+   "id": "{BBBB-2222}",
+   "displayName": "rival"
+  }
+ ],
+ "teams": [
+  {
+   "id": 1,
+   "abbrev": "ME",
+   "name": "My Team",
+   "owners": [
+    "{AAAA-1111}"
+   ]
+  },
+  {
+   "id": 2,
+   "abbrev": "OPP",
+   "location": "Their",
+   "nickname": "Team",
+   "owners": [
+    "{BBBB-2222}"
+   ]
+  },
+  {
+   "id": 3,
+   "abbrev": "BYE",
+   "name": "Third Team",
+   "owners": [
+    "{CCCC-3333}"
+   ]
+  }
+ ],
+ "schedule": [
+  {
+   "id": 1,
+   "matchupPeriodId": 1,
+   "home": {
+    "teamId": 1,
+    "totalPoints": 63.2,
+    "rosterForCurrentScoringPeriod": {
+     "entries": [
+      {
+       "playerId": 3918298,
+       "lineupSlotId": 0,
+       "playerPoolEntry": {
+        "id": 3918298,
+        "appliedStatTotal": 24.1,
+        "player": {
+         "id": 3918298,
+         "fullName": "Josh Allen",
+         "firstName": "Josh",
+         "lastName": "Allen",
+         "defaultPositionId": 1,
+         "proTeamId": 2,
+         "injuryStatus": "ACTIVE",
+         "stats": [
+          {
+           "scoringPeriodId": 1,
+           "statSourceId": 1,
+           "appliedTotal": 99.9
+          },
+          {
+           "scoringPeriodId": 1,
+           "statSourceId": 0,
+           "appliedTotal": 24.1
+          }
+         ]
+        }
+       }
+      },
+      {
+       "playerId": 4362628,
+       "lineupSlotId": 4,
+       "playerPoolEntry": {
+        "id": 4362628,
+        "appliedStatTotal": 26.7,
+        "player": {
+         "id": 4362628,
+         "fullName": "Ja'Marr Chase",
+         "firstName": "Ja'Marr",
+         "lastName": "Chase",
+         "defaultPositionId": 3,
+         "proTeamId": 4,
+         "injuryStatus": "ACTIVE",
+         "stats": [
+          {
+           "scoringPeriodId": 1,
+           "statSourceId": 1,
+           "appliedTotal": 99.9
+          },
+          {
+           "scoringPeriodId": 1,
+           "statSourceId": 0,
+           "appliedTotal": 26.7
+          }
+         ]
+        }
+       }
+      },
+      {
+       "playerId": 4430878,
+       "lineupSlotId": 4,
+       "playerPoolEntry": {
+        "id": 4430878,
+        "appliedStatTotal": 12.4,
+        "player": {
+         "id": 4430878,
+         "fullName": "Jaxon Smith-Njigba",
+         "firstName": "Jaxon",
+         "lastName": "Smith-Njigba",
+         "defaultPositionId": 3,
+         "proTeamId": 26,
+         "injuryStatus": "ACTIVE",
+         "stats": [
+          {
+           "scoringPeriodId": 1,
+           "statSourceId": 1,
+           "appliedTotal": 99.9
+          },
+          {
+           "scoringPeriodId": 1,
+           "statSourceId": 0,
+           "appliedTotal": 12.4
+          }
+         ]
+        }
+       }
+      },
+      {
+       "playerId": 4431452,
+       "lineupSlotId": 20,
+       "playerPoolEntry": {
+        "id": 4431452,
+        "appliedStatTotal": 18.0,
+        "player": {
+         "id": 4431452,
+         "fullName": "Drake Maye",
+         "firstName": "Drake",
+         "lastName": "Maye",
+         "defaultPositionId": 1,
+         "proTeamId": 17,
+         "injuryStatus": "ACTIVE",
+         "stats": [
+          {
+           "scoringPeriodId": 1,
+           "statSourceId": 1,
+           "appliedTotal": 99.9
+          },
+          {
+           "scoringPeriodId": 1,
+           "statSourceId": 0,
+           "appliedTotal": 18.0
+          }
+         ]
+        }
+       }
+      },
+      {
+       "playerId": 3912547,
+       "lineupSlotId": 21,
+       "playerPoolEntry": {
+        "id": 3912547,
+        "appliedStatTotal": 5.0,
+        "player": {
+         "id": 3912547,
+         "fullName": "Sam Darnold",
+         "firstName": "Sam",
+         "lastName": "Darnold",
+         "defaultPositionId": 1,
+         "proTeamId": 26,
+         "injuryStatus": "ACTIVE",
+         "stats": [
+          {
+           "scoringPeriodId": 1,
+           "statSourceId": 1,
+           "appliedTotal": 99.9
+          },
+          {
+           "scoringPeriodId": 1,
+           "statSourceId": 0,
+           "appliedTotal": 5.0
+          }
+         ]
+        }
+       }
+      }
+     ]
+    }
+   },
+   "away": {
+    "teamId": 2,
+    "totalPoints": 41.5,
+    "rosterForCurrentScoringPeriod": {
+     "entries": [
+      {
+       "playerId": 3139477,
+       "lineupSlotId": 0,
+       "playerPoolEntry": {
+        "id": 3139477,
+        "appliedStatTotal": 18.3,
+        "player": {
+         "id": 3139477,
+         "fullName": "Patrick Mahomes",
+         "firstName": "Patrick",
+         "lastName": "Mahomes",
+         "defaultPositionId": 1,
+         "proTeamId": 12,
+         "injuryStatus": "ACTIVE",
+         "stats": [
+          {
+           "scoringPeriodId": 1,
+           "statSourceId": 1,
+           "appliedTotal": 99.9
+          },
+          {
+           "scoringPeriodId": 1,
+           "statSourceId": 0,
+           "appliedTotal": 18.3
+          }
+         ]
+        }
+       }
+      },
+      {
+       "playerId": 4239993,
+       "lineupSlotId": 2,
+       "playerPoolEntry": {
+        "id": 4239993,
+        "appliedStatTotal": 8.0,
+        "player": {
+         "id": 4239993,
+         "fullName": "Bijan Robinson",
+         "firstName": "Bijan",
+         "lastName": "Robinson",
+         "defaultPositionId": 2,
+         "proTeamId": 1,
+         "injuryStatus": "ACTIVE",
+         "stats": [
+          {
+           "scoringPeriodId": 1,
+           "statSourceId": 1,
+           "appliedTotal": 99.9
+          },
+          {
+           "scoringPeriodId": 1,
+           "statSourceId": 0,
+           "appliedTotal": 8.0
+          }
+         ]
+        }
+       }
+      },
+      {
+       "playerId": 4426515,
+       "lineupSlotId": 4,
+       "playerPoolEntry": {
+        "id": 4426515,
+        "appliedStatTotal": 15.2,
+        "player": {
+         "id": 4426515,
+         "fullName": "Malik Nabers",
+         "firstName": "Malik",
+         "lastName": "Nabers",
+         "defaultPositionId": 3,
+         "proTeamId": 19,
+         "injuryStatus": "ACTIVE",
+         "stats": [
+          {
+           "scoringPeriodId": 1,
+           "statSourceId": 1,
+           "appliedTotal": 99.9
+          },
+          {
+           "scoringPeriodId": 1,
+           "statSourceId": 0,
+           "appliedTotal": 15.2
+          }
+         ]
+        }
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": 2,
+   "matchupPeriodId": 2,
+   "home": {
+    "teamId": 1,
+    "totalPoints": 0
+   },
+   "away": {
+    "teamId": 3,
+    "totalPoints": 0
+   }
+  }
+ ]
+}
