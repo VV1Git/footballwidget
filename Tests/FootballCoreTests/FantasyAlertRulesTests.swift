@@ -28,7 +28,7 @@ private func moment(
     slot: LineupSlot = .starting("WR"),
     isMine: Bool = true,
     total: Double = 26.7,
-    text: String? = "J.Burrow 14 yd pass to J.Chase, TOUCHDOWN."
+    text: String? = "(Shotgun) J.Burrow pass short left to J.Chase for 4 yards, TOUCHDOWN. E.McPherson extra point is GOOD, Center-W.Wagner, Holder-R.Rehkow."
 ) -> FantasyMoment {
     FantasyMoment(
         player: player(1, "Ja'Marr", "Chase", slot: slot, points: total),
@@ -118,8 +118,8 @@ private func moment(
 
 // MARK: - Notification text
 
-/// You asked to see all of it in the banner, so each field has to stay short enough
-/// that macOS does not truncate it.
+/// Title and subtitle carry the player, the points and the matchup; the body is his side
+/// of the play in a few words rather than the whole gamebook sentence.
 @Test func notificationTextFitsABanner() throws {
     let long = "(Shotgun) J.Burrow pass deep right to J.Chase for 63 yards, TOUCHDOWN. "
              + "The Replay Official reviewed the runner broke the plane ruling, and the play was upheld."
@@ -129,12 +129,36 @@ private func moment(
     ).first)
 
     #expect(event.title == "Yours · Ja'Marr Chase +12.4")
-    #expect(event.title.count <= 42)
+    #expect(event.title.count <= AlertRules.titleLimit)
     let subtitle = try #require(event.subtitle)
     #expect(subtitle == "TD · 26.7 total · You 78.2 – 71.5")
-    #expect(subtitle.count <= 48)
-    #expect(event.body.count <= 100)
-    #expect(event.body.hasSuffix("…"))
+    #expect(subtitle.count <= AlertRules.subtitleLimit)
+    #expect(event.body == "63-yd catch from J. Burrow")
+}
+
+/// The same play reads differently depending on whose side of it you are on.
+@Test func playLineIsFromThePlayersPointOfView() throws {
+    let text = "(Shotgun) J.Burrow pass short left to J.Chase for 4 yards, TOUCHDOWN. E.McPherson extra point is GOOD, Center-W.Wagner, Holder-R.Rehkow."
+    let passer = FantasyMoment(
+        player: RosterPlayer(id: 2, fullName: "Joe Burrow", firstName: "Joe", lastName: "Burrow",
+                             position: .quarterback, slot: .starting("QB"), proTeamID: 4, points: 20, injuryStatus: nil),
+        isMine: true, delta: 6, playText: text, isTouchdown: true)
+    #expect(FantasyAlertRules.playLine(for: passer) == "4-yd pass to J. Chase")
+
+    let rusher = FantasyMoment(
+        player: RosterPlayer(id: 3, fullName: "Chase Brown", firstName: "Chase", lastName: "Brown",
+                             position: .runningBack, slot: .starting("RB"), proTeamID: 4, points: 20, injuryStatus: nil),
+        isMine: true, delta: 6.5, playText: "C.Brown up the middle for 5 yards, TOUCHDOWN. E.McPherson extra point is GOOD, Center-W.Wagner, Holder-R.Rehkow.",
+        isTouchdown: true)
+    #expect(FantasyAlertRules.playLine(for: rusher) == "5-yd run")
+}
+
+/// A play the parser cannot read from his side still loses the clutter.
+@Test func unreadablePlaysAreCondensed() {
+    #expect(FantasyAlertRules.condensed("(Shotgun) J.Burrow sacked at CIN 30 for -7 yards (T.Watt).")
+            == "J.Burrow sacked at CIN 30 for -7 yards (T.Watt).")
+    #expect(FantasyAlertRules.condensed("E.McPherson extra point is GOOD, Center-W.Wagner, Holder-R.Rehkow.")
+            == "E.McPherson extra point is GOOD.")
 }
 
 @Test func handlesAMissingPlayDescription() throws {

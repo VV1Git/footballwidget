@@ -41,7 +41,22 @@ enum PlayPointsStore {
         return result
     }
 
+    /// Saving and clearing happen on one serial queue, off the main actor. The fantasy
+    /// store banks points during its poll on the main actor, and encoding and atomically
+    /// rewriting the file there put file I/O on the thread that draws the panel. Being
+    /// serial keeps a save followed by a clear (a reconnect) in that order. The file
+    /// format is unchanged.
+    private static let queue = DispatchQueue(label: "FootballWidget.PlayPointsStore", qos: .utility)
+
     static func save(_ points: [String: [Int: Double]]) {
+        queue.async { write(points) }
+    }
+
+    static func clear() {
+        queue.async { try? FileManager.default.removeItem(at: fileURL) }
+    }
+
+    private static func write(_ points: [String: [Int: Double]]) {
         var encoded: [String: [String: Double]] = [:]
         for (playID, byPlayer) in points {
             var converted: [String: Double] = [:]
@@ -62,9 +77,5 @@ enum PlayPointsStore {
         } catch {
             NSLog("[FootballWidget] could not save play points: \(error.localizedDescription)")
         }
-    }
-
-    static func clear() {
-        try? FileManager.default.removeItem(at: fileURL)
     }
 }

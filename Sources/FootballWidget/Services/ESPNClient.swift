@@ -5,6 +5,13 @@ import FootballCore
 ///
 /// These are undocumented, so every request is conditional (ETag) to stay light, and
 /// a 304 is reported as "unchanged" rather than as an error.
+///
+/// In practice ESPN sends neither `ETag` nor `Last-Modified` on the scoreboard or the
+/// play feed, so the 304 never comes: a live Sunday logged every one of several hundred
+/// requests as a full 200. What does happen is that a body is often byte-for-byte the
+/// previous one — 7 of 17 scoreboard polls and 11 of 17 play-feed polls in a recording
+/// at five-second spacing — so a body whose fingerprint matches the last one for that
+/// URL is reported as "unchanged" too, before any decoding.
 actor ESPNClient {
     struct Team: Identifiable, Hashable, Sendable {
         let id: String
@@ -20,10 +27,17 @@ actor ESPNClient {
 
     private let session: URLSession
     private var etags: [String: String] = [:]
+    private var fingerprints = BodyFingerprints()
+    /// Off for a client whose caller needs every answer as a value — `ReplaySource`
+    /// loads its game once and would be left with nothing if a retry said "unchanged".
+    private let reportsRepeatedBodies: Bool
 
     private static let base = "https://site.api.espn.com/apis/site/v2/sports/football/nfl"
 
-    init() {
+    /// `reportsRepeatedBodies`: report a body identical to the last one for the same URL
+    /// as `.unchanged`. The caller must then keep what it already has, as for a 304.
+    init(reportsRepeatedBodies: Bool = true) {
+        self.reportsRepeatedBodies = reportsRepeatedBodies
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 15
         config.waitsForConnectivity = false
@@ -36,9 +50,33 @@ actor ESPNClient {
 
     func scoreboard() async throws -> Fetch<[Game]> {
         let result: Fetch<ESPNScoreboardDTO> = try await get("\(Self.base)/scoreboard")
-        switch result {
-        case .unchanged: return .unchanged
-        case .updated(let dto): return .updated(ESPNMapper.games(from: dto))
+        guard case .updated(let dto) = result else { return .unchanged }
+
+        let games = ESPNMapper.games(from: dto)
+        // ESPN's week ends on Wednesday morning UTC, not when the football does, so
+        // from the end of Monday night until then the default scoreboard is a full set
+        // of finals and the coming week is nowhere in it. Once there is nothing left to
+        // play in the week we were handed, ask for the next one by name.
+        guard !games.isEmpty, games.allSatisfy({ $0.phase == .final }),
+              let next = ScoreboardCalendar.nextWeek(after: .now, in: dto)
+        else { return .updated(games) }
+
+        let url = "\(Self.base)/scoreboard?week=\(next.number)&seasontype=\(next.seasonType)"
+        do {
+            // "Unchanged" has to be passed on rather than treated as "nothing there".
+            // The next week's slate sits still for days, so its body repeats on every
+            // poll — answering with `games` instead would flip the panel back to the
+            // finals this whole detour exists to get past.
+            switch try await get(url) as Fetch<ESPNScoreboardDTO> {
+            case .unchanged:
+                return .unchanged
+            case .updated(let nextDTO):
+                let nextGames = ESPNMapper.games(from: nextDTO)
+                return .updated(nextGames.isEmpty ? games : nextGames)
+            }
+        } catch {
+            // A failed substitution costs the upcoming slate, never the one in hand.
+            return .updated(games)
         }
     }
 
@@ -97,8 +135,14 @@ actor ESPNClient {
             etags[urlString] = tag
         }
 
+        let checksBody = useETag && reportsRepeatedBodies
+        let fingerprint = checksBody ? BodyFingerprints.fingerprint(data) : 0
+        if checksBody, fingerprints.matches(fingerprint, for: urlString) { return .unchanged }
+
         do {
-            return .updated(try JSONDecoder().decode(T.self, from: data))
+            let decoded = try JSONDecoder().decode(T.self, from: data)
+            if checksBody { fingerprints.remember(fingerprint, for: urlString) }
+            return .updated(decoded)
         } catch {
             throw ClientError.decoding(String(describing: error))
         }

@@ -14,7 +14,10 @@ sleep 1
 
 echo "==> installing to $DEST"
 rm -rf "$DEST"
-cp -R "$APP" "$DEST"
+# Moved, not copied: a second bundle left in build/ shares this bundle id, so opening it
+# (or a login item still pointing at it) runs a second widget beside the installed one,
+# each polling ESPN and posting its own notifications.
+mv "$APP" "$DEST"
 
 echo "==> launching"
 open "$DEST"

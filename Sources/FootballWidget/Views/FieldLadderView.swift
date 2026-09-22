@@ -156,14 +156,16 @@ struct FieldLadderView: View {
             if layout.showsEndZoneLabels {
                 Text(offense?.abbreviation ?? "")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle((offense?.tint ?? .secondary).legibleOnGlass(dark: scheme == .dark))
+                    .foregroundStyle(offense?.legibleTint(dark: scheme == .dark)
+                                     ?? Color.secondary.legibleOnGlass(dark: scheme == .dark))
                     .fixedSize()
                     .frame(width: layout.endZoneWidth + 16)
                     .offset(x: layout.leftEdge - 8)
 
                 Text(defense?.abbreviation ?? "")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle((defense?.tint ?? .secondary).legibleOnGlass(dark: scheme == .dark))
+                    .foregroundStyle(defense?.legibleTint(dark: scheme == .dark)
+                                     ?? Color.secondary.legibleOnGlass(dark: scheme == .dark))
                     .fixedSize()
                     .frame(width: layout.endZoneWidth + 16)
                     .offset(x: layout.trackTrailingEdge - 8)

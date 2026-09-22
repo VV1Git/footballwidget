@@ -21,7 +21,9 @@ actor AlertEngine {
                 game: game,
                 settings: settings
             )
-            snapshots[game.id] = GameSnapshot(game: game)
+            // Built from the last snapshot so it remembers which play has already been
+            // credited with points, and whether that play was still under review.
+            snapshots[game.id] = GameSnapshot(game: game, previous: snapshots[game.id])
 
             for event in events where deliveredIDs.insert(event.id).inserted {
                 await deliver(event)
@@ -59,11 +61,16 @@ actor AlertEngine {
     private func deliver(_ event: AlertEvent) async {
         guard await ensureAuthorized() else { return }
 
+        // A banner gives the title and subtitle one line each and the body about two, so
+        // the rules put who scored / who has the ball in the first two. The body is often
+        // empty on purpose, when repeating the play text would add nothing.
         let content = UNMutableNotificationContent()
         content.title = event.title
-        content.body = event.body
         if let subtitle = event.subtitle, !subtitle.isEmpty, subtitle != event.body {
             content.subtitle = subtitle
+        }
+        if !event.body.isEmpty {
+            content.body = event.body
         }
         content.sound = .default
         content.interruptionLevel = .active

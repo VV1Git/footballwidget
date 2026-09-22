@@ -244,3 +244,197 @@ private let realSWID = "{AAAA-0001-0000-0000-000000000001}"
     #expect(matchup.mine.name == "My Team")
     #expect(matchup.opponent?.name == "Their Team")
 }
+
+// MARK: - Projections and win probability
+
+/// A second real payload, recorded mid-Sunday with projections and ESPN's
+/// `winProbability` left in. Members, team names and the league are redacted.
+private func projectedLeague() throws -> FantasyLeagueDTO {
+    let located = Bundle.module.url(forResource: "league-winprob", withExtension: "json",
+                                    subdirectory: "Fixtures")
+    let url = try #require(located)
+    return try JSONDecoder().decode(FantasyLeagueDTO.self, from: Data(contentsOf: url))
+}
+
+@Test func readsESPNsWinProbabilityAndProjectedTotals() throws {
+    let matchup = try #require(FantasyMapper.matchup(from: try projectedLeague(), swid: realSWID))
+    #expect(matchup.espnWinProbability == 0.79)
+    #expect(matchup.mine.projectedPoints == 131.48662858)
+    #expect(matchup.opponent?.projectedPoints == 94.50208874)
+    // "UNDECIDED" while the games are on.
+    #expect(matchup.outcome == nil)
+}
+
+/// Real rosters carry this week's projection beside a whole-season one twenty times
+/// larger, and last season's actual total too. Only the week's projection is wanted,
+/// and none of it may leak into the points.
+@Test func readsThisWeeksProjectionNotTheSeasons() throws {
+    let matchup = try #require(FantasyMapper.matchup(from: try projectedLeague(), swid: realSWID))
+    let daniels = try #require(matchup.mine.roster.first { $0.id == 4426348 })
+    #expect(daniels.projectedPoints == 16.86076128)
+    #expect(daniels.points == 0)
+
+    #expect(matchup.mine.points == 59.3)
+    #expect(matchup.opponent?.points == 36.22)
+    // Every starter on both sides has a projection for the week.
+    let starters = matchup.mine.starters + (matchup.opponent?.starters ?? [])
+    #expect(starters.allSatisfy { $0.projectedPoints != nil })
+}
+
+/// The mapper reads projections now, which must not change what counts as scored.
+@Test func projectionsNeverBecomePointsInTheReconstructedFixture() throws {
+    let matchup = try #require(FantasyMapper.matchup(from: try league(), swid: mySWID))
+    let chase = try #require(matchup.mine.roster.first { $0.id == 4362628 })
+    #expect(chase.projectedPoints == 99.9)
+    #expect(chase.points == 26.7)
+    #expect(matchup.espnWinProbability == nil)
+}
+
+/// The stat lines of a player whose game has not started, as ESPN sends them: last
+/// season's total, both season projections and this week's projection, but no actual
+/// line for this week yet.
+private let notYetPlayedStats = """
+[
+  {"seasonId": 2026, "scoringPeriodId": 1, "statSourceId": 1, "statSplitTypeId": 1, "appliedTotal": 16.86},
+  {"seasonId": 2025, "scoringPeriodId": 0, "statSourceId": 0, "statSplitTypeId": 0, "appliedTotal": 114.28},
+  {"seasonId": 2025, "scoringPeriodId": 0, "statSourceId": 1, "statSplitTypeId": 0, "appliedTotal": 372.11},
+  {"seasonId": 2026, "scoringPeriodId": 0, "statSourceId": 1, "statSplitTypeId": 0, "appliedTotal": 328.13}
+]
+"""
+
+/// Falling back to the first actual line in the array used to report last season's
+/// 114.28 as this week's score.
+@Test func aWeekWithNoActualLineScoresZeroNotLastSeason() throws {
+    let stats = try JSONDecoder().decode([Failable<FantasyPlayerStatDTO>].self,
+                                         from: Data(notYetPlayedStats.utf8))
+    #expect(FantasyMapper.actualPoints(from: stats, scoringPeriod: 1) == 0)
+    #expect(FantasyMapper.projectedPoints(from: stats, scoringPeriod: 1) == 16.86)
+}
+
+/// No known week, or a week with no projection, is no projection — not a guess.
+@Test func projectionsNeedTheRightWeek() throws {
+    let stats = try JSONDecoder().decode([Failable<FantasyPlayerStatDTO>].self,
+                                         from: Data(notYetPlayedStats.utf8))
+    #expect(FantasyMapper.projectedPoints(from: stats, scoringPeriod: nil) == nil)
+    #expect(FantasyMapper.projectedPoints(from: stats, scoringPeriod: 2) == nil)
+    #expect(FantasyMapper.projectedPoints(from: nil, scoringPeriod: 1) == nil)
+}
+
+@Test func readsTheSettledWinnerFromYourSide() throws {
+    func outcome(_ winner: String?, iAmHome: Bool) throws -> MatchupOutcome? {
+        let winnerField = winner.map { "\"winner\": \"\($0)\"," } ?? ""
+        let json = Data("""
+        {\(winnerField) "home": {"teamId": 1}, "away": {"teamId": 2}}
+        """.utf8)
+        let dto = try JSONDecoder().decode(FantasyMatchupDTO.self, from: json)
+        return FantasyMapper.outcome(of: dto, myTeamID: iAmHome ? 1 : 2)
+    }
+    #expect(try outcome("HOME", iAmHome: true) == .won)
+    #expect(try outcome("HOME", iAmHome: false) == .lost)
+    #expect(try outcome("AWAY", iAmHome: false) == .won)
+    #expect(try outcome("TIE", iAmHome: true) == .tied)
+    #expect(try outcome("UNDECIDED", iAmHome: true) == nil)
+    #expect(try outcome(nil, iAmHome: true) == nil)
+}
+
+// MARK: - Between two weeks
+
+/// A third real payload, recorded on the Tuesday between week 1 and week 2: the new
+/// week's opponent and lineups are set, and not one of its games has kicked off yet.
+///
+/// This is the shape that produced the bug below, and it is worth being precise about
+/// what makes it nasty. ESPN answers with `scoringPeriodId: 2`, the week 2 matchup and
+/// the week 2 lineup — but `teams[].roster` still carries every player's *week 1*
+/// `appliedStatTotal`, because that field is not scoped to a week and only resets when
+/// the new week's first game starts. Add those up over the week 2 starters and you get
+/// a number that belongs to neither week.
+private func betweenWeeksLeague() throws -> FantasyLeagueDTO {
+    let located = Bundle.module.url(forResource: "league-betweenweeks", withExtension: "json",
+                                    subdirectory: "Fixtures")
+    let url = try #require(located)
+    return try JSONDecoder().decode(FantasyLeagueDTO.self, from: Data(contentsOf: url))
+}
+
+/// The reported bug: "the league numbers show like the week 1 numbers vs my week 2
+/// opponent". 130.46 is the week 2 starters scored with their week 1 points; the real
+/// week 1 result was 110.06 and the real week 2 score is nothing yet.
+@Test func lastWeeksPointsDoNotCarryIntoTheNewWeek() throws {
+    let matchup = try #require(FantasyMapper.matchup(from: try betweenWeeksLeague(), swid: realSWID))
+    #expect(matchup.week == 2)
+    #expect(matchup.mine.points == 0)
+    #expect(matchup.opponent?.points == 0)
+    #expect(matchup.compactScore == "0.0 – 0.0")
+}
+
+/// The same staleness one level down: every player's `appliedStatTotal` is last week's
+/// until his game starts, and none of it may reach the matchup view.
+@Test func noPlayerCarriesLastWeeksPointsIntoTheNewWeek() throws {
+    let matchup = try #require(FantasyMapper.matchup(from: try betweenWeeksLeague(), swid: realSWID))
+    let everyone = matchup.mine.roster + (matchup.opponent?.roster ?? [])
+    #expect(!everyone.isEmpty)
+    #expect(everyone.allSatisfy { $0.points == 0 })
+}
+
+/// Zeroing the points must not zero the week. The opponent, the lineups and ESPN's
+/// own projections are all real and all still have to come through.
+@Test func theNewWeeksMatchupIsStillFullyBuilt() throws {
+    let matchup = try #require(FantasyMapper.matchup(from: try betweenWeeksLeague(), swid: realSWID))
+    #expect(matchup.mine.name == "My Team")
+    #expect(matchup.opponent?.name == "Their Team")
+    #expect(matchup.mine.roster.count == 17)
+    #expect(matchup.opponent?.roster.count == 16)
+    #expect(matchup.mine.starters.count == 9)
+
+    // Names and NFL team ids are what the field map joins on.
+    #expect(matchup.mine.roster.allSatisfy { !$0.fullName.hasPrefix("Player ") })
+    #expect(matchup.mine.roster.allSatisfy { $0.proTeamID != nil })
+
+    // ESPN's numbers for the week ahead, which are not stale.
+    #expect(matchup.espnWinProbability == 0.43)
+    #expect(matchup.mine.projectedPoints == 115.55368286)
+    #expect(matchup.opponent?.projectedPoints == 129.78192455)
+    #expect(matchup.mine.starters.allSatisfy { $0.projectedPoints != nil })
+}
+
+/// The week's projection sits in the same stats array as last week's actual total, so
+/// the rule that keeps one out has to keep letting the other in.
+@Test func thisWeeksProjectionSurvivesWhileLastWeeksPointsAreDropped() throws {
+    let matchup = try #require(FantasyMapper.matchup(from: try betweenWeeksLeague(), swid: realSWID))
+    let daniels = try #require(matchup.mine.roster.first { $0.fullName == "Jayden Daniels" })
+    #expect(daniels.points == 0)                    // 17.66 of it was week 1's
+    #expect(daniels.projectedPoints == 19.70636964)
+}
+
+/// From week two on, `appliedStatTotal` is not this week's points at all: it is the
+/// season so far. Jaxon Smith-Njigba's week-two payload (recorded mid-game, 2026-09-20)
+/// had 68.7 in it — his 26.2 from week one plus 42.5 from this week — while ESPN's own
+/// screens showed 42.5. Only the per-week line is the week's score.
+@Test func seasonToDateAppliedTotalIsNotThisWeeksScore() throws {
+    let pool = try JSONDecoder().decode(
+        FantasyPlayerPoolEntryDTO.self,
+        from: Data(#"{"id": 4430878, "appliedStatTotal": 68.7, "player": {"id": 4430878}}"#.utf8))
+    let stats = try JSONDecoder().decode([Failable<FantasyPlayerStatDTO>].self, from: Data("""
+    [
+      {"seasonId": 2026, "scoringPeriodId": 2, "statSourceId": 1, "statSplitTypeId": 1, "appliedTotal": 18.5},
+      {"seasonId": 2026, "scoringPeriodId": 2, "statSourceId": 0, "statSplitTypeId": 1, "appliedTotal": 42.5},
+      {"seasonId": 2026, "scoringPeriodId": 1, "statSourceId": 0, "statSplitTypeId": 1, "appliedTotal": 26.2},
+      {"seasonId": 2025, "scoringPeriodId": 0, "statSourceId": 0, "statSplitTypeId": 0, "appliedTotal": 359.9},
+      {"seasonId": 2026, "scoringPeriodId": 0, "statSourceId": 0, "statSplitTypeId": 0, "appliedTotal": 68.7}
+    ]
+    """.utf8))
+    #expect(FantasyMapper.points(pool: pool, stats: stats, scoringPeriod: 2) == 42.5)
+    // Week one is the one week where the two happen to agree.
+    #expect(FantasyMapper.points(pool: pool, stats: stats, scoringPeriod: 1) == 26.2)
+}
+
+/// `appliedStatTotal` is still the answer where there is nothing better: the views that
+/// send a roster with no stats attached at all.
+@Test func fallsBackToAppliedTotalWhenThereAreNoStats() throws {
+    let pool = try JSONDecoder().decode(
+        FantasyPlayerPoolEntryDTO.self,
+        from: Data(#"{"id": 1, "appliedStatTotal": 12.5, "player": {"id": 1}}"#.utf8))
+    #expect(FantasyMapper.points(pool: pool, stats: nil, scoringPeriod: 2) == 12.5)
+    #expect(FantasyMapper.points(pool: pool, stats: [], scoringPeriod: 2) == 12.5)
+    // And where the period itself is unknown, since then nothing can be scoped to it.
+    #expect(FantasyMapper.points(pool: pool, stats: nil, scoringPeriod: nil) == 12.5)
+}

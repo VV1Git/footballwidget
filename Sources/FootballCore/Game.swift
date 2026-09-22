@@ -202,6 +202,21 @@ public struct PlayNode: Hashable, Sendable {
     }
 }
 
+/// What a scoring play put on the board.
+public enum ScoreKind: String, Sendable, Hashable {
+    case touchdown, fieldGoal, safety, other
+
+    /// Short enough for the ladder's result column.
+    public var label: String {
+        switch self {
+        case .touchdown: return "TD"
+        case .fieldGoal: return "FG"
+        case .safety: return "Safety"
+        case .other: return "Score"
+        }
+    }
+}
+
 public struct Play: Identifiable, Hashable, Sendable {
     public var id: String
     public var sequence: Int
@@ -213,6 +228,9 @@ public struct Play: Identifiable, Hashable, Sendable {
     public var period: Int
     public var clock: String
     public var isScoring: Bool
+    /// Set exactly when `isScoring` is. A field goal is a scoring play too, so
+    /// `isScoring` alone must never be read as "touchdown".
+    public var scoreKind: ScoreKind?
     public var isTurnover: Bool
     public var isPenalty: Bool
     /// Running score after this play, as reported by the play feed.
@@ -225,7 +243,7 @@ public struct Play: Identifiable, Hashable, Sendable {
     public init(
         id: String, sequence: Int, typeID: String?, typeText: String, text: String,
         downDistanceText: String?, yards: Int, period: Int, clock: String,
-        isScoring: Bool, isTurnover: Bool, isPenalty: Bool,
+        isScoring: Bool, scoreKind: ScoreKind? = nil, isTurnover: Bool, isPenalty: Bool,
         homeScore: Int? = nil, awayScore: Int? = nil,
         start: PlayNode, end: PlayNode, kind: PlayKind
     ) {
@@ -239,6 +257,7 @@ public struct Play: Identifiable, Hashable, Sendable {
         self.period = period
         self.clock = clock
         self.isScoring = isScoring
+        self.scoreKind = scoreKind
         self.isTurnover = isTurnover
         self.isPenalty = isPenalty
         self.homeScore = homeScore

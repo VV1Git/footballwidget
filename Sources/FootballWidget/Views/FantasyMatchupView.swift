@@ -17,7 +17,7 @@ struct FantasyMatchupView: View {
 
             if let matchup = fantasy.matchup {
                 ScrollView {
-                    FantasyMatchupContent(matchup: matchup)
+                    FantasyMatchupContent(matchup: matchup, winProbability: fantasy.winProbability)
                         .padding(Metrics.gutter)
                 }
                 .scrollIndicators(.never)
@@ -138,6 +138,8 @@ struct FantasyMatchupView: View {
 /// rendered offscreen — `ImageRenderer` does not lay out `ScrollView` content.
 struct FantasyMatchupContent: View {
     let matchup: FantasyMatchup
+    /// Computed by the store when data arrives, never here.
+    var winProbability: WinProbability? = nil
 
     @Environment(GameStore.self) private var games
 
@@ -151,6 +153,18 @@ struct FantasyMatchupContent: View {
     // MARK: - Score
 
     fileprivate func scoreboard(_ matchup: FantasyMatchup) -> some View {
+        VStack(spacing: 9) {
+            totals(matchup)
+            if let winProbability, matchup.opponent != nil {
+                WinProbabilityBar(probability: winProbability)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .glassCard()
+    }
+
+    fileprivate func totals(_ matchup: FantasyMatchup) -> some View {
         HStack(alignment: .center, spacing: 10) {
             teamTotal(matchup.mine, label: "You", leading: matchup.margin > 0)
             VStack(spacing: 1) {
@@ -169,9 +183,6 @@ struct FantasyMatchupContent: View {
                     .frame(maxWidth: .infinity)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .glassCard()
     }
 
     fileprivate func marginText(_ matchup: FantasyMatchup) -> String {
@@ -273,4 +284,91 @@ struct FantasyMatchupContent: View {
         return games.games.contains { $0.isLive && ($0.home.id == team || $0.away.id == team) }
     }
 
+}
+
+/// Chance to win laid out the way ESPN's FantasyCast does it: one bar split between the
+/// two sides, each end labelled with its percentage. Green is yours and orange theirs,
+/// the same pairing as the chips on the play map. Pure layout; the numbers arrive done.
+struct WinProbabilityBar: View {
+    let probability: WinProbability
+
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                percent(probability.myPercentText, favoured: probability.myPercent >= 50)
+                Spacer(minLength: 4)
+                Text(caption)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                percent(probability.theirPercentText, favoured: probability.theirPercent >= 50)
+            }
+
+            bar
+
+            if !probability.isSettled,
+               let mine = probability.projectedMine,
+               let theirs = probability.projectedTheirs {
+                HStack {
+                    Text("Proj \(String(format: "%.1f", mine))")
+                    Spacer()
+                    Text("Proj \(String(format: "%.1f", theirs))")
+                }
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+                .monospacedDigit()
+            }
+        }
+        .help(helpText)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Chance to win: you \(probability.myPercentText), opponent \(probability.theirPercentText)")
+    }
+
+    private func percent(_ text: String, favoured: Bool) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(favoured ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+    }
+
+    private var bar: some View {
+        // While games remain, neither side is drawn as nothing: the bar should not look
+        // more certain than the ">99%" printed above it.
+        let share = probability.isSettled
+            ? probability.mine
+            : min(max(probability.mine, 0.01), 0.99)
+        let gap: CGFloat = share > 0 && share < 1 ? 2 : 0
+
+        return GeometryReader { proxy in
+            let usable = max(proxy.size.width - gap, 0)
+            HStack(spacing: gap) {
+                if share > 0 {
+                    Capsule().fill(Color.green).frame(width: usable * share)
+                }
+                if share < 1 {
+                    Capsule().fill(Color.orange)
+                }
+            }
+        }
+        .frame(height: 5)
+    }
+
+    private var caption: String {
+        switch probability.source {
+        case .espn: return "Chance to win"
+        case .model: return "Chance to win (est.)"
+        case .result: return "Final"
+        }
+    }
+
+    private var helpText: String {
+        switch probability.source {
+        case .espn:
+            return "ESPN's win probability for this matchup."
+        case .model:
+            return "ESPN did not send a win probability, so this one is estimated from its player projections and how much of each game is left."
+        case .result:
+            return "Every starter's game is over."
+        }
+    }
 }

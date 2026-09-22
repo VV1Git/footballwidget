@@ -187,6 +187,7 @@ public enum ESPNMapper {
             period: dto.period?.number ?? 0,
             clock: dto.clock?.displayValue ?? "",
             isScoring: dto.scoringPlay ?? false,
+            scoreKind: scoreKind(from: dto),
             isTurnover: isTurnover,
             isPenalty: dto.isPenalty ?? false,
             homeScore: dto.homeScore,
@@ -197,6 +198,25 @@ public enum ESPNMapper {
                 typeID: dto.type?.id, isTurnover: isTurnover, start: start, end: end
             )
         )
+    }
+
+    /// ESPN's `scoringType` is what says what a score was. The play type does not: a
+    /// "Blocked Field Goal" can be returned for a touchdown and a "Penalty" can be a
+    /// safety. The text is only read when `scoringType` is missing, which happened once
+    /// in 1,344 recorded scoring plays.
+    static func scoreKind(from dto: ESPNPlayDTO) -> ScoreKind? {
+        guard dto.scoringPlay == true else { return nil }
+        switch dto.scoringType?.abbreviation?.uppercased() {
+        case "TD": return .touchdown
+        case "FG": return .fieldGoal
+        case "SF": return .safety
+        default: break
+        }
+        let text = (dto.text ?? dto.shortText ?? "").lowercased()
+        if text.contains("touchdown") { return .touchdown }
+        if text.contains("field goal is good") { return .fieldGoal }
+        if text.contains("safety") { return .safety }
+        return .other
     }
 
     static func node(from dto: ESPNPlayNodeDTO?) -> PlayNode {

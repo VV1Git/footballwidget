@@ -80,15 +80,21 @@ public struct FantasyPlayerDTO: Decodable, Sendable {
 }
 
 public struct FantasyPlayerStatDTO: Decodable, Sendable {
+    public var seasonId: Int?
+    /// 0 for a whole-season line. A real roster carries last season's total, this
+    /// season's projected total and this week's projection side by side, so this is
+    /// what separates "projected 16.9 this week" from "projected 328 this year".
     public var scoringPeriodId: Int?
     public var statSourceId: Int?      // 0 = actual, 1 = projected
-    public var statSplitTypeId: Int?
+    public var statSplitTypeId: Int?   // 0 = season, 1 = single scoring period
     public var appliedTotal: Double?
 }
 
 public struct FantasyMatchupDTO: Decodable, Sendable {
     public var id: Int?
     public var matchupPeriodId: Int?
+    /// "HOME", "AWAY" or "TIE" once ESPN has settled the week; "UNDECIDED" until then,
+    /// including the whole time the games are being played.
     public var winner: String?
     public var home: FantasyMatchupSideDTO?
     public var away: FantasyMatchupSideDTO?
@@ -101,7 +107,14 @@ public struct FantasyMatchupSideDTO: Decodable, Sendable {
     public var totalPoints: Double?
     /// The score as it stands right now. This is the one that moves during games.
     public var totalPointsLive: Double?
+    /// Points scored plus what ESPN still expects from the lineup — the "Proj Total"
+    /// on ESPN's own matchup screens. Unlike `totalProjectedPoints`, which is fixed at
+    /// kickoff, this one moves during games.
     public var totalProjectedPointsLive: Double?
+    /// ESPN's chance this side wins, 0–1 to two decimals, as shown under "Chance to Win"
+    /// in FantasyCast. Carried by `mMatchupScore`, only for the matchup period in
+    /// progress: a finished season's schedule has none. Verified against a live week.
+    public var winProbability: Double?
     public var rosterForCurrentScoringPeriod: FantasyRosterDTO?
     public var rosterForMatchupPeriod: FantasyRosterDTO?
 }

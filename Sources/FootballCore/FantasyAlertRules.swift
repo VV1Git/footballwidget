@@ -75,9 +75,63 @@ public enum FantasyAlertRules {
             id: "fantasy-\(leagueName ?? "")-\(moment.player.id)-\(total)",
             kind: .fantasy,
             title: "\(side) · \(moment.player.fullName) \(points)",
-            body: trimmed(moment.playText) ?? "\(moment.player.fullName) scored \(points)",
+            body: playLine(for: moment) ?? "\(moment.player.fullName) scored \(points)",
             subtitle: facts.joined(separator: " · ")
         )
+    }
+
+    /// What the player did, from his side of the play: "14-yd catch from J. Burrow"
+    /// rather than the whole gamebook sentence. The subtitle already says "TD", so the
+    /// line does not repeat it.
+    ///
+    /// When the play cannot be read from his point of view — a defense, or phrasing the
+    /// parser does not know — the play text is cleaned of formation and snapper credits
+    /// and shortened instead.
+    static func playLine(for moment: FantasyMoment) -> String? {
+        guard let text = moment.playText, !text.isEmpty else { return nil }
+        let play = PlaySummary.parse(text)
+        let player = moment.player
+        func isHim(_ name: String?) -> Bool {
+            PlaySummary.name(name, matchesFirst: player.firstName, last: player.lastName)
+        }
+        func gain(_ yards: Int?) -> String { yards.map { $0 > 0 ? "\($0)-yd " : "" } ?? "" }
+        let isPass = play.kind == .pass || play.touchdown == .pass
+
+        if isPass, isHim(play.receiver) {
+            return "\(gain(play.yards))catch" + (play.passer.map { " from \($0)" } ?? "")
+        }
+        if isPass, isHim(play.passer) {
+            return "\(gain(play.yards))pass" + (play.receiver.map { " to \($0)" } ?? "")
+        }
+        if play.kind == .rush, isHim(play.rusher) {
+            return "\(gain(play.yards))run"
+        }
+        if play.kind == .fieldGoal(.good), isHim(play.kicker) {
+            return "\(gain(play.yards))field goal"
+        }
+        if play.touchdown != nil, isHim(play.scorer),
+           let how = AlertRules.touchdownDetails(play).first(where: { $0.hasPrefix(play.scorer ?? "") }) {
+            // "D. Knight 27-yd fumble return" → "27-yd fumble return"
+            return String(how.dropFirst((play.scorer ?? "").count)).trimmingCharacters(in: .whitespaces)
+        }
+        return trimmed(condensed(text))
+    }
+
+    /// Drops what a banner has no room for: `(Shotgun)`, `(9:44)`, "reported in as
+    /// eligible", and the long snapper and holder on kicks.
+    static func condensed(_ text: String) -> String {
+        var result = text.replacingOccurrences(of: "\n", with: " ")
+        let clutter = [
+            "^\\s*(?:\\([^)]*\\)\\s*)+",
+            "[A-Z][a-z]{0,2}\\.[A-Za-z'\\- ]+? reported in as eligible\\.\\s*",
+            ",?\\s*(?:Center|Holder)-[A-Z][a-z]{0,2}\\.[A-Za-z'\\-]+",
+            "\\s{2,}",
+        ]
+        for pattern in clutter {
+            result = result.replacingOccurrences(of: pattern, with: pattern == "\\s{2,}" ? " " : "",
+                                                 options: .regularExpression)
+        }
+        return result.trimmingCharacters(in: .whitespaces)
     }
 
     static func qualifies(_ moment: FantasyMoment, settings: FantasyAlertSettings) -> Bool {
@@ -103,8 +157,9 @@ public enum FantasyAlertRules {
         return rounded < 0 ? "-\(text)" : "+\(text)"
     }
 
-    /// Play descriptions run long; a notification body shows roughly two lines.
-    static func trimmed(_ text: String?, limit: Int = 96) -> String? {
+    /// Play descriptions run long; a notification body shows roughly two lines, and one
+    /// is plenty once the headline facts are in the title and subtitle.
+    static func trimmed(_ text: String?, limit: Int = 72) -> String? {
         guard let text, !text.isEmpty else { return nil }
         guard text.count > limit else { return text }
         let cut = text.prefix(limit)

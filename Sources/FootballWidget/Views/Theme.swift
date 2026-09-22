@@ -54,6 +54,35 @@ extension Color {
 extension TeamSide {
     var tint: Color { Color(espnHex: primaryHex) ?? .accentColor }
     var altTint: Color { Color(espnHex: secondaryHex) ?? tint }
+
+    /// `tint.legibleOnGlass(dark:)`, remembered per team colour.
+    ///
+    /// The adjustment round-trips through `NSColor` and a colour-space conversion —
+    /// about 10µs a call measured, and the ladder asked for it twice per play row plus
+    /// once per drive row, on every render. Team colours are fixed sRGB values, so the
+    /// answer never changes; only the `.accentColor` fallback is dynamic, and that one
+    /// is left uncached.
+    @MainActor
+    func legibleTint(dark: Bool) -> Color {
+        guard let hex = primaryHex, let base = Color(espnHex: hex) else {
+            return tint.legibleOnGlass(dark: dark)
+        }
+        let key = LegibleTintCache.Key(hex: hex, dark: dark)
+        if let cached = LegibleTintCache.entries[key] { return cached }
+        let adjusted = base.legibleOnGlass(dark: dark)
+        LegibleTintCache.entries[key] = adjusted
+        return adjusted
+    }
+}
+
+@MainActor
+private enum LegibleTintCache {
+    struct Key: Hashable {
+        let hex: String
+        let dark: Bool
+    }
+    /// At most 32 teams × 2 appearances, so it is never trimmed.
+    static var entries: [Key: Color] = [:]
 }
 
 /// Shared metrics so the panel and the torn-off window stay in step.

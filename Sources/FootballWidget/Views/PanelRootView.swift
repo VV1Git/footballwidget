@@ -10,6 +10,10 @@ struct PanelRootView: View {
     @Environment(Preferences.self) private var preferences
     @State private var selectedGameID: String?
     @State private var showingFantasy = false
+    /// The panel's window outlives its closing, and SwiftUI drives a `repeatForever`
+    /// animation frame by frame on the main thread even off screen — which for the
+    /// refresh spinner meant every poll, all day. It only spins while the panel is open.
+    @State private var isShown = false
     @Namespace private var glassNamespace
 
     private var selectedGame: Game? {
@@ -59,8 +63,14 @@ struct PanelRootView: View {
         // list's ScrollView collapse to zero — leaving a panel showing nothing but the
         // header and the footer.
         .frame(width: Metrics.panelWidth, height: panelHeight)
-        .onAppear { store.focus = selectedGameID.map { .detail(gameID: $0) } ?? .list }
-        .onDisappear { store.focus = .closed }
+        .onAppear {
+            isShown = true
+            store.focus = selectedGameID.map { .detail(gameID: $0) } ?? .list
+        }
+        .onDisappear {
+            isShown = false
+            store.focus = .closed
+        }
     }
 
     /// Everything above the divider and the footer.
@@ -134,6 +144,13 @@ struct PanelRootView: View {
                             Text(matchup.compactScore)
                                 .font(.system(size: 9, weight: .semibold))
                                 .monospacedDigit()
+                            // Your chance of winning, while there is still one to have.
+                            if let chance = fantasy.winProbability, !chance.isSettled {
+                                Text(chance.myPercentText)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .monospacedDigit()
+                                    .foregroundStyle(.tertiary)
+                            }
                         } else {
                             Text("Fantasy").font(.system(size: 9, weight: .medium))
                         }
@@ -149,11 +166,11 @@ struct PanelRootView: View {
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 9, weight: .semibold))
-                    .rotationEffect(.degrees(store.isRefreshing ? 360 : 0))
-                    .animation(store.isRefreshing
+                    .rotationEffect(.degrees(store.isRefreshing && isShown ? 360 : 0))
+                    .animation(store.isRefreshing && isShown
                                ? .linear(duration: 0.9).repeatForever(autoreverses: false)
                                : .default,
-                               value: store.isRefreshing)
+                               value: store.isRefreshing && isShown)
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)

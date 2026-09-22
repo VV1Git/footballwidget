@@ -67,6 +67,45 @@ public struct ESPNStatusDTO: Decodable, Sendable {
 
 public struct ESPNScoreboardDTO: Decodable, Sendable {
     public var events: [Failable<ESPNEventDTO>]?
+    /// Which week this response is for. ESPN picks it from the calendar below, not
+    /// from the date, so it is last week's number all of Tuesday.
+    public var week: ESPNWeekDTO?
+    public var season: ESPNSeasonDTO?
+    public var leagues: [Failable<ESPNLeagueDTO>]?
+}
+
+public struct ESPNWeekDTO: Decodable, Sendable {
+    public var number: Int?
+}
+
+public struct ESPNSeasonDTO: Decodable, Sendable {
+    /// 1 preseason, 2 regular season, 3 postseason.
+    public var type: Int?
+    public var year: Int?
+}
+
+public struct ESPNLeagueDTO: Decodable, Sendable {
+    /// One entry per season type, each holding that type's weeks.
+    public var calendar: [Failable<ESPNCalendarSeasonDTO>]?
+}
+
+/// A season type — "Regular Season", "Postseason" — and the weeks inside it.
+public struct ESPNCalendarSeasonDTO: Decodable, Sendable {
+    public var label: String?
+    /// The season type as a string, matching `season.type`: "2" for the regular season.
+    public var value: String?
+    public var entries: [Failable<ESPNCalendarEntryDTO>]?
+}
+
+/// One week, with the window ESPN considers it to own. The windows run Wednesday
+/// 07:00Z to the following Wednesday 06:59Z, which is why the scoreboard still
+/// answers with last week's finals on a Tuesday.
+public struct ESPNCalendarEntryDTO: Decodable, Sendable {
+    public var label: String?
+    /// The week number as a string: "2".
+    public var value: String?
+    public var startDate: String?
+    public var endDate: String?
 }
 
 public struct ESPNEventDTO: Decodable, Sendable {
@@ -171,6 +210,12 @@ public struct ESPNPlayTypeDTO: Decodable, Sendable {
     public var abbreviation: String?
 }
 
+/// What kind of score a scoring play was. `abbreviation` is "TD", "FG" or "SF".
+public struct ESPNScoringTypeDTO: Decodable, Sendable {
+    public var name: String?
+    public var abbreviation: String?
+}
+
 public struct ESPNPlayDTO: Decodable, Sendable {
     public var id: String?
     public var sequenceNumber: String?
@@ -183,6 +228,7 @@ public struct ESPNPlayDTO: Decodable, Sendable {
     public var period: ESPNPeriodDTO?
     public var clock: ESPNClockDTO?
     public var scoringPlay: Bool?
+    public var scoringType: ESPNScoringTypeDTO?
     public var isPenalty: Bool?
     public var isTurnover: Bool?
     public var statYardage: Int?

@@ -46,8 +46,24 @@ public enum FantasyMapper {
             leagueName: dto.settings?.name ?? "Fantasy",
             week: matchupPeriod,
             mine: mine,
-            opponent: opponent
+            opponent: opponent,
+            espnWinProbability: mineSide?.winProbability,
+            outcome: matchup.flatMap { outcome(of: $0, myTeamID: myTeamID) }
         )
+    }
+
+    /// ESPN names the winning side as home or away, so it has to be turned round to
+    /// read from yours. Anything other than a settled result — "UNDECIDED", a missing
+    /// field, a spelling ESPN has not used yet — is left undecided rather than guessed.
+    static func outcome(of matchup: FantasyMatchupDTO, myTeamID: Int) -> MatchupOutcome? {
+        guard let winner = matchup.winner?.uppercased() else { return nil }
+        let iAmHome = matchup.home?.teamId == myTeamID
+        switch winner {
+        case "TIE": return .tied
+        case "HOME": return iAmHome ? .won : .lost
+        case "AWAY": return iAmHome ? .lost : .won
+        default: return nil
+        }
     }
 
     /// Your SWID identifies you in `members`; the team that lists you as an owner is
@@ -105,33 +121,41 @@ public enum FantasyMapper {
         ].compactMap { $0 }
 
         var roster: [RosterPlayer] = []
-        var rosterApplied: Double = 0
         for candidate in rosterCandidates {
             let players = (candidate.entries ?? []).compacted()
                 .compactMap { player(from: $0, scoringPeriod: scoringPeriod) }
-            if players.count > roster.count {
-                roster = players
-                rosterApplied = candidate.appliedStatTotal ?? 0
-            }
+            if players.count > roster.count { roster = players }
         }
 
-        // Four ways of saying the same thing, any of which can be zero depending on
-        // whether the week is in progress or settled. Taking the largest picks the
-        // live score during the games and the final score afterwards, without having
-        // to guess which phase we are in.
+        // Three ways of saying the same thing, any of which can be zero depending on
+        // whether the week is in progress or settled: `totalPointsLive` moves during
+        // the games, `totalPoints` is filled in once the week settles, and the starters
+        // add up to the same figure in both phases. Taking the largest picks whichever
+        // of them is populated without having to guess which phase we are in.
+        //
+        // The roster's own `appliedStatTotal` used to take part here and must not.
+        // It is not scoped to a week: ESPN leaves the previous week's total in it
+        // until the new week's first game kicks off, so from the end of Monday night
+        // football until Thursday it holds a finished week's points — larger than the
+        // real zero, so it won the `max` and the matchup view showed last week's score
+        // against this week's opponent.
         let summed = roster.filter(\.isStarter).reduce(0) { $0 + $1.points }
         let liveSum = (summed * 100).rounded() / 100
-        let total = max(
+        let largest = max(
             max(side?.totalPointsLive ?? 0, side?.totalPoints ?? 0),
-            max(rosterApplied, liveSum)
+            liveSum
         )
+        // Rounded again because ESPN's own totals can arrive drifted
+        // (59.300000000000004), and being a hair larger they win the `max`.
+        let total = (largest * 100).rounded() / 100
 
         return FantasyTeam(
             id: id,
             name: displayName(of: dto) ?? "Team \(id)",
             abbreviation: dto?.abbrev ?? "T\(id)",
             points: total,
-            roster: roster
+            roster: roster,
+            projectedPoints: side?.totalProjectedPointsLive
         )
     }
 
@@ -164,24 +188,67 @@ public enum FantasyMapper {
             position: FantasyPosition.from(id: dto?.defaultPositionId),
             slot: LineupSlot.from(id: entry.lineupSlotId),
             proTeamID: dto?.proTeamId,
-            points: pool?.appliedStatTotal ?? actualPoints(from: dto?.stats, scoringPeriod: scoringPeriod),
-            injuryStatus: dto?.injuryStatus
+            points: points(pool: pool, stats: dto?.stats, scoringPeriod: scoringPeriod),
+            injuryStatus: dto?.injuryStatus,
+            projectedPoints: projectedPoints(from: dto?.stats, scoringPeriod: scoringPeriod)
         )
+    }
+
+    /// What this player has actually scored in `scoringPeriod`.
+    ///
+    /// `appliedStatTotal` is the number that moves during a game, but it is not scoped
+    /// to a week: until the new week's first game kicks off ESPN still has the previous
+    /// week's total sitting in it. The per-period stat line is the one that resets, so
+    /// when the period is known and the player carries stats, that line decides — and
+    /// no line for the period means nothing scored yet, which is exactly what should
+    /// be shown on a Tuesday. Checked against a payload recorded mid-Sunday: every one
+    /// of its players' period lines matched `appliedStatTotal` to the cent, so nothing
+    /// is given up on liveness by preferring it.
+    ///
+    /// `appliedStatTotal` stays as the fallback for the views that send no stats at all.
+    static func points(
+        pool: FantasyPlayerPoolEntryDTO?,
+        stats: [Failable<FantasyPlayerStatDTO>]?,
+        scoringPeriod: Int?
+    ) -> Double {
+        guard scoringPeriod != nil, !(stats ?? []).compacted().isEmpty else {
+            return pool?.appliedStatTotal ?? 0
+        }
+        return actualPoints(from: stats, scoringPeriod: scoringPeriod)
     }
 
     /// `appliedStatTotal` is the live number, but some views only carry the stat array.
     /// `statSourceId == 0` is actual production; 1 is a projection and must not be
     /// mistaken for points already scored. The array also holds other weeks, so the
     /// current scoring period wins when we know which one that is.
+    ///
+    /// When the week is known but has no line, the answer is zero. Falling back to the
+    /// first actual would pick up whatever else is in the array, and in a real payload
+    /// a player who has not played yet carries last season's total there.
     static func actualPoints(
         from stats: [Failable<FantasyPlayerStatDTO>]?,
         scoringPeriod: Int? = nil
     ) -> Double {
         let entries = (stats ?? []).compacted().filter { $0.statSourceId == 0 }
-        if let scoringPeriod,
-           let match = entries.first(where: { $0.scoringPeriodId == scoringPeriod }) {
-            return match.appliedTotal ?? 0
+        if let scoringPeriod {
+            return entries.first(where: { $0.scoringPeriodId == scoringPeriod })?.appliedTotal ?? 0
         }
         return entries.first?.appliedTotal ?? 0
+    }
+
+    /// This week's projection: `statSourceId == 1` for exactly this scoring period.
+    ///
+    /// The period match is what matters. Beside the weekly line, a roster carries a
+    /// whole-season projection (period 0) that is twenty times bigger, and a win
+    /// probability built on that would be nonsense. With no known period nothing is
+    /// returned, so a missing projection stays missing instead of becoming a guess.
+    static func projectedPoints(
+        from stats: [Failable<FantasyPlayerStatDTO>]?,
+        scoringPeriod: Int?
+    ) -> Double? {
+        guard let scoringPeriod else { return nil }
+        return (stats ?? []).compacted()
+            .first { $0.statSourceId == 1 && $0.scoringPeriodId == scoringPeriod }?
+            .appliedTotal
     }
 }

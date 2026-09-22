@@ -119,6 +119,49 @@ private let candidates: [(player: RosterPlayer, isMine: Bool)] = [
     #expect(value == -6.0)
 }
 
+// MARK: - Plays that cannot score
+
+private func play(_ id: String, _ sequence: Int, _ text: String) -> Play {
+    Play(id: id, sequence: sequence, typeID: nil, typeText: "", text: text,
+         downDistanceText: nil, yards: 0, period: 2, clock: "7:15",
+         isScoring: false, isTurnover: false, isPenalty: false,
+         start: PlayNode(), end: PlayNode(), kind: .scrimmage)
+}
+
+private func detail(plays: [Play]) -> GameDetail {
+    let drive = Drive(id: "d1", teamID: "26", teamAbbreviation: "SEA", result: "",
+                      isScore: false, yards: 0, playCount: plays.count, timeElapsed: "",
+                      summary: "", startText: nil, plays: plays, isCurrent: true)
+    return GameDetail(gameID: "1", drives: [drive], scoringPlayIDs: [])
+}
+
+@Test func incompletionsAndNoPlaysCannotScore() {
+    let incomplete = "(Shotgun) D.Lock pass incomplete short right to J.Smith-Njigba."
+    #expect(!PlayAttribution.canScore(playText: incomplete))
+    #expect(!PlayAttribution.canScore(
+        playText: "S.Darnold pass short left to J.Smith-Njigba for 12 yards. PENALTY on SEA-A.Lawrence, Holding, 10 yards, NULLIFIED."))
+    #expect(PlayAttribution.canScore(
+        playText: "S.Darnold pass short middle to J.Smith-Njigba for 13 yards (R.Spillane)."))
+    #expect(PlayAttribution.canScore(playText: "K.Walker left end to SEA 30 for 5 yards."))
+}
+
+/// ESPN's fantasy totals arrive a poll after the play feed, so a catch's points land
+/// while the newest play naming the receiver is the incompletion thrown his way next.
+/// The points belong to the catch.
+@Test func pointsLandOnTheCatchNotTheIncompletionAfterIt() throws {
+    let catchPlay = play("catch", 1, "(Shotgun) D.Lock pass deep right to J.Smith-Njigba for 28 yards (C.Ward).")
+    let incomplete = play("miss", 2, "(Shotgun) D.Lock pass incomplete short right to J.Smith-Njigba.")
+    let found = PlayAttribution.mostRecentPlay(
+        naming: smithNjigba, in: detail(plays: [catchPlay, incomplete])
+    )
+    #expect(found?.id == "catch")
+}
+
+@Test func noScoringPlayMeansNoAttribution() {
+    let incomplete = play("miss", 1, "(Shotgun) D.Lock pass incomplete short right to J.Smith-Njigba.")
+    #expect(PlayAttribution.mostRecentPlay(naming: smithNjigba, in: detail(plays: [incomplete])) == nil)
+}
+
 // MARK: - Against the whole recorded game
 
 @Test func runsOverEveryPlayOfARealGameWithoutFalsePositives() throws {

@@ -7,12 +7,21 @@
 import AppKit
 import Foundation
 
-func drawIcon(size: CGFloat) -> NSImage {
-    let image = NSImage(size: NSSize(width: size, height: size))
-    image.lockFocus()
-    guard let context = NSGraphicsContext.current?.cgContext else {
-        image.unlockFocus(); return image
-    }
+/// Draws into a bitmap of exactly `size` pixels. `NSImage.lockFocus` renders at the
+/// screen's backing scale, so on a Retina Mac every image came out at twice its name
+/// ("16x16" was 32 px) and `iconutil` quietly left the mismatched sizes out of the icns.
+func drawIcon(size: CGFloat) -> NSBitmapImageRep {
+    let pixels = Int(size)
+    let rep = NSBitmapImageRep(
+        bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels,
+        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+    )!
+    rep.size = NSSize(width: size, height: size)
+    guard let graphics = NSGraphicsContext(bitmapImageRep: rep) else { return rep }
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = graphics
+    let context = graphics.cgContext
     context.setAllowsAntialiasing(true)
     context.interpolationQuality = .high
 
@@ -96,8 +105,8 @@ func drawIcon(size: CGFloat) -> NSImage {
     context.strokePath()
     context.restoreGState()
 
-    image.unlockFocus()
-    return image
+    NSGraphicsContext.restoreGraphicsState()
+    return rep
 }
 
 let outputDirectory = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "./AppIcon.iconset"
@@ -113,10 +122,7 @@ let variants: [(name: String, size: CGFloat)] = [
 ]
 
 for variant in variants {
-    let image = drawIcon(size: variant.size)
-    guard let tiff = image.tiffRepresentation,
-          let rep = NSBitmapImageRep(data: tiff),
-          let png = rep.representation(using: .png, properties: [:])
+    guard let png = drawIcon(size: variant.size).representation(using: .png, properties: [:])
     else { continue }
     let path = "\(outputDirectory)/\(variant.name).png"
     try? png.write(to: URL(fileURLWithPath: path))

@@ -144,7 +144,21 @@ public enum PlayAttribution {
         return result
     }
 
-    /// The newest play in a game whose text names this player.
+    /// Whether a play's text describes something that could have moved a fantasy total.
+    ///
+    /// Being named is not enough. ESPN's fantasy totals trail the play feed by a poll or
+    /// two, so by the time a catch's points land the newest play naming the receiver can
+    /// be the next snap, an incompletion thrown his way, and that snap got the +3.8
+    /// that belongs to the catch before it. An incompletion or a play wiped out by a
+    /// penalty scores nothing for anyone it names, so it is never a candidate.
+    public static func canScore(playText text: String) -> Bool {
+        switch PlaySummary.parse(text).kind {
+        case .incompletePass, .noPlay, .underReview: return false
+        default: return true
+        }
+    }
+
+    /// The newest play in a game whose text names this player and could have scored.
     ///
     /// Drives arrive newest-first and plays within a drive run oldest-first, so the
     /// search walks drives forward and plays backward to find the most recent mention.
@@ -155,7 +169,8 @@ public enum PlayAttribution {
         let candidate: [(player: RosterPlayer, isMine: Bool)] = [(player, true)]
         for drive in detail.drives {
             for play in drive.plays.reversed() where play.kind != .administrative {
-                if !players(namedIn: play.text, candidates: candidate).isEmpty {
+                if !players(namedIn: play.text, candidates: candidate).isEmpty,
+                   canScore(playText: play.text) {
                     return play
                 }
             }

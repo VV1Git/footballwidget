@@ -205,10 +205,10 @@ struct LadderRowView: View {
 
     private var barColor: Color {
         let dark = scheme == .dark
-        if row.flipsFrame { return (defense?.tint ?? .red).legibleOnGlass(dark: dark) }
+        if row.flipsFrame { return defense?.legibleTint(dark: dark) ?? Color.red.legibleOnGlass(dark: dark) }
         if row.play.isScoring { return .orange }
         if row.isBackwards { return .red.opacity(0.75) }
-        return (offense?.tint ?? .accentColor).legibleOnGlass(dark: dark)
+        return offense?.legibleTint(dark: dark) ?? Color.accentColor.legibleOnGlass(dark: dark)
     }
 
     private var meta: some View {
@@ -274,7 +274,7 @@ struct LadderRowView: View {
 
     private var yardageLabel: String {
         if row.isDriveStart { return "" }
-        if row.play.isScoring { return "TD" }
+        if row.play.isScoring { return row.play.scoreKind?.label ?? ScoreKind.other.label }
         if row.flipsFrame { return "" }
         return row.play.yardageLabel
     }

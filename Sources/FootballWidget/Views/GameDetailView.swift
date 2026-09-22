@@ -137,7 +137,7 @@ struct GameDetailView: View {
                     if let team = game.teamWithPossession {
                         Image(systemName: "football.fill")
                             .font(.system(size: 8))
-                            .foregroundStyle(team.tint.legibleOnGlass(dark: scheme == .dark))
+                            .foregroundStyle(team.legibleTint(dark: scheme == .dark))
                         Text(team.abbreviation)
                             .font(.system(size: 10, weight: .semibold))
                     }
@@ -399,7 +399,8 @@ struct DriveRowView: View {
         Button(action: onSelect) {
             HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 1.5)
-                    .fill((team?.tint ?? .gray).legibleOnGlass(dark: scheme == .dark))
+                    .fill(team?.legibleTint(dark: scheme == .dark)
+                          ?? Color.gray.legibleOnGlass(dark: scheme == .dark))
                     .frame(width: 3, height: 20)
 
                 Text(drive.teamAbbreviation)

@@ -18,7 +18,9 @@ actor ReplaySource: GameFeed {
     private var orderedPlays: [(driveIndex: Int, play: Play)] = []
     private var loadFailed = false
 
-    init(upstream: ESPNClient = ESPNClient(), secondsPerPlay: Double = 1.5) {
+    /// The upstream client reports every body as a value: this loads its game once, and a
+    /// retry after a failed load must not be told the scoreboard is "unchanged".
+    init(upstream: ESPNClient = ESPNClient(reportsRepeatedBodies: false), secondsPerPlay: Double = 1.5) {
         self.upstream = upstream
         self.secondsPerPlay = secondsPerPlay
     }

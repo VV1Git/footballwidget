@@ -102,10 +102,13 @@ public struct RosterPlayer: Identifiable, Hashable, Sendable {
     public var proTeamID: Int?
     public var points: Double
     public var injuryStatus: String?
+    /// ESPN's projection for this player's whole week, fixed before kickoff. Nil when
+    /// ESPN sent none, which is different from a projection of zero (a player on bye).
+    public var projectedPoints: Double?
 
     public init(id: Int, fullName: String, firstName: String, lastName: String,
                 position: FantasyPosition, slot: LineupSlot, proTeamID: Int?,
-                points: Double, injuryStatus: String?) {
+                points: Double, injuryStatus: String?, projectedPoints: Double? = nil) {
         self.id = id
         self.fullName = fullName
         self.firstName = firstName
@@ -115,6 +118,7 @@ public struct RosterPlayer: Identifiable, Hashable, Sendable {
         self.proTeamID = proTeamID
         self.points = points
         self.injuryStatus = injuryStatus
+        self.projectedPoints = projectedPoints
     }
 
     /// How ESPN's play text writes this player: "J.Smith-Njigba".
@@ -132,14 +136,17 @@ public struct FantasyTeam: Identifiable, Hashable, Sendable {
     public var abbreviation: String
     public var points: Double
     public var roster: [RosterPlayer]
+    /// ESPN's live projected final: points so far plus what it still expects.
+    public var projectedPoints: Double?
 
     public init(id: Int, name: String, abbreviation: String, points: Double,
-                roster: [RosterPlayer]) {
+                roster: [RosterPlayer], projectedPoints: Double? = nil) {
         self.id = id
         self.name = name
         self.abbreviation = abbreviation
         self.points = points
         self.roster = roster
+        self.projectedPoints = projectedPoints
     }
 
     /// Starters in lineup order, so two teams can be read side by side.
@@ -154,18 +161,30 @@ public struct FantasyTeam: Identifiable, Hashable, Sendable {
     public var bench: [RosterPlayer] { roster.filter { !$0.isStarter } }
 }
 
+/// How ESPN has settled a matchup, from your side of it.
+public enum MatchupOutcome: Sendable, Hashable {
+    case won, lost, tied
+}
+
 /// Your matchup for the current week.
 public struct FantasyMatchup: Sendable, Hashable {
     public var leagueName: String
     public var week: Int
     public var mine: FantasyTeam
     public var opponent: FantasyTeam?
+    /// ESPN's own chance that you win, 0–1. Nil when ESPN did not send one.
+    public var espnWinProbability: Double?
+    /// Nil until ESPN declares a winner, which it does not do until the week settles.
+    public var outcome: MatchupOutcome?
 
-    public init(leagueName: String, week: Int, mine: FantasyTeam, opponent: FantasyTeam?) {
+    public init(leagueName: String, week: Int, mine: FantasyTeam, opponent: FantasyTeam?,
+                espnWinProbability: Double? = nil, outcome: MatchupOutcome? = nil) {
         self.leagueName = leagueName
         self.week = week
         self.mine = mine
         self.opponent = opponent
+        self.espnWinProbability = espnWinProbability
+        self.outcome = outcome
     }
 
     public var margin: Double { mine.points - (opponent?.points ?? 0) }

@@ -92,7 +92,10 @@ private struct PinnedGameView: View {
         .frame(minWidth: 170, minHeight: 64)
         .background(.ultraThinMaterial)
         .task(id: gameID) {
-            // The window can outlive the panel, so it keeps its own game fed.
+            // The window can outlive the panel, so it keeps its own game fed. When the
+            // store's own loop is already polling this game (focus is on it), the two
+            // overlap; `refreshDetail` shares a fetch made in the last few seconds
+            // rather than pulling the same feed twice.
             while !Task.isCancelled {
                 await store.refreshDetail(id: gameID)
                 try? await Task.sleep(for: .seconds(5))

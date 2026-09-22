@@ -26,6 +26,10 @@ final class FantasyStore {
     /// Credits keyed by NFL play id, for the field map to draw chips from.
     private(set) var creditsByPlay: [String: [PlayAttribution.Credit]] = [:]
 
+    /// Chance of winning per league, worked out when data arrives rather than in a view
+    /// body. Absent when there is no opponent or nothing honest to show.
+    private(set) var winProbabilities: [String: WinProbability] = [:]
+
     private let client: FantasyClient
     private let preferences: Preferences
     private let alerts: AlertEngine
@@ -53,6 +57,7 @@ final class FantasyStore {
         store.matchups["preview"] = matchup
         store.states["preview"] = .connected
         store.previewLeagueID = "preview"
+        store.winProbabilities["preview"] = WinProbability.estimate(for: matchup) { _ in nil }
         return store
     }
 
@@ -87,6 +92,11 @@ final class FantasyStore {
         guard isConfigured else { return .notConfigured }
         guard let activeLeagueID else { return .notConfigured }
         return states[activeLeagueID] ?? .connecting
+    }
+
+    /// The active league's chance of winning.
+    var winProbability: WinProbability? {
+        activeLeagueID.flatMap { winProbabilities[$0] }
     }
 
     func matchup(for leagueID: String) -> FantasyMatchup? { matchups[leagueID] }
@@ -190,6 +200,7 @@ final class FantasyStore {
         creditsByPlay = [:]
         matchups = [:]
         states = [:]
+        winProbabilities = [:]
         Task { await refresh() }
     }
 
@@ -199,6 +210,7 @@ final class FantasyStore {
         matchups[leagueID] = nil
         states[leagueID] = nil
         previousPoints[leagueID] = nil
+        winProbabilities[leagueID] = nil
         if leagueIDs.isEmpty {
             games?.trackedGameIDs = []
             creditsByPlay = [:]
@@ -215,6 +227,7 @@ final class FantasyStore {
         guard isConfigured else {
             states = [:]
             matchups = [:]
+            winProbabilities = [:]
             return
         }
 
@@ -233,6 +246,7 @@ final class FantasyStore {
         lastUpdated = .now
         updateTrackedGames()
         rebuildCredits()
+        updateWinProbabilities()
     }
 
     private func refresh(leagueID: String, credentials: FantasyClient.Credentials) async {
@@ -243,9 +257,13 @@ final class FantasyStore {
                 previous: previousPoints[leagueID] ?? [:], current: current
             )
 
-            matchups[leagueID] = fresh
+            // Only written when changed. Assigning a whole property an equal value is
+            // free, but writing through a dictionary subscript notifies every view that
+            // reads the dictionary, equal or not — so an unchanged matchup re-ran every
+            // game row and the detail view on each poll.
+            if matchups[leagueID] != fresh { matchups[leagueID] = fresh }
             previousPoints[leagueID] = current
-            states[leagueID] = .connected
+            if states[leagueID] != .connected { states[leagueID] = .connected }
 
             let moments = attribute(deltas: deltas, matchup: fresh)
             if !moments.isEmpty {
@@ -260,7 +278,7 @@ final class FantasyStore {
         } catch {
             let message = (error as? FantasyClient.FantasyError)?.errorDescription
                 ?? error.localizedDescription
-            states[leagueID] = .failed(message)
+            if states[leagueID] != .failed(message) { states[leagueID] = .failed(message) }
         }
     }
 
@@ -274,6 +292,31 @@ final class FantasyStore {
             .filter { teams.contains($0.home.id) || teams.contains($0.away.id) }
             .map(\.id)
         games.trackedGameIDs = Set(ids)
+    }
+
+    // MARK: - Win probability
+
+    /// Recomputed on every fantasy poll, which runs every 15 seconds while games are
+    /// live. That keeps the arithmetic out of view bodies, and a sub-poll clock tick
+    /// would not move ESPN's own number anyway.
+    ///
+    /// Progress comes from the NFL scoreboard, joined on team id: fantasy `proTeamId`
+    /// is the NFL team id.
+    private func updateWinProbabilities() {
+        var progressByTeam: [Int: GameProgress] = [:]
+        for game in games?.games ?? [] {
+            guard let progress = GameProgress(game: game) else { continue }
+            for teamID in [game.home.id, game.away.id].compactMap({ Int($0) }) {
+                progressByTeam[teamID] = progress
+            }
+        }
+
+        var result: [String: WinProbability] = [:]
+        for (leagueID, matchup) in allMatchups {
+            result[leagueID] = WinProbability.estimate(for: matchup) { progressByTeam[$0] }
+        }
+        // Assigning only on change spares the matchup view a redraw on every poll.
+        if result != winProbabilities { winProbabilities = result }
     }
 
     // MARK: - Attribution
@@ -304,8 +347,12 @@ final class FantasyStore {
                 delta: delta,
                 playText: play?.text,
                 // A big jump with no identifiable play is still almost certainly a
-                // score — a defensive or special teams touchdown, typically.
-                isTouchdown: play?.isScoring ?? (delta >= 6)
+                // score — a defensive or special teams touchdown, typically. Otherwise
+                // only a touchdown counts: a field goal is a scoring play too, and a
+                // kicker's extra point is written into the touchdown's play text.
+                isTouchdown: play.map {
+                    $0.scoreKind == .touchdown && entry.player.position != .kicker
+                } ?? (delta >= 6)
             ))
         }
         if banked { PlayPointsStore.save(pointsByPlay) }
@@ -361,6 +408,9 @@ final class FantasyStore {
             for drive in detail.drives {
                 for play in drive.plays where play.kind != .administrative {
                     guard let banked = pointsByPlay[play.id], !banked.isEmpty else { continue }
+                    // Points banked against an incompletion were pinned there by mistake
+                    // (an older build did that); a chip on one would be wrong.
+                    guard PlayAttribution.canScore(playText: play.text) else { continue }
                     let credits = PlayAttribution.credits(
                         forPlayText: play.text,
                         candidates: candidates,
@@ -385,6 +435,7 @@ final class FantasyStore {
         pointsByPlay = [:]
         PlayPointsStore.clear()
         creditsByPlay = [:]
+        winProbabilities = [:]
         games?.trackedGameIDs = []
     }
 }
