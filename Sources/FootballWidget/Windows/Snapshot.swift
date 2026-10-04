@@ -200,3 +200,120 @@ enum Snapshot {
         NSApp.terminate(nil)
     }
 }
+
+// MARK: - RedZone
+
+extension Snapshot {
+    static var requestedRedZoneDirectory: String? {
+        let arguments = CommandLine.arguments
+        guard let index = arguments.firstIndex(of: "--snapshot-redzone"),
+              arguments.count > index + 1 else { return nil }
+        return arguments[index + 1]
+    }
+
+    /// `--snapshot-redzone <directory>` draws the RedZone pill and window offscreen from
+    /// a made-up Sunday slate. No network: the layout can be checked any day of the week
+    /// without asking ESPN for anything.
+    static func runRedZone(directory: String) async {
+        let before = sampleSlate(kcScore: 10, buffaloBall: false)
+        let after = sampleSlate(kcScore: 17, buffaloBall: true)
+        let feed = StaticFeed(games: after)
+        let gameStore = GameStore(feed: feed)
+        await gameStore.refresh()
+
+        let redZone = RedZoneStore()
+        let now = Date.now
+        redZone.ingest(before, changed: true, now: now.addingTimeInterval(-20))
+        redZone.ingest(after, changed: true, now: now)
+        let fantasyStore = FantasyStore(alerts: AlertEngine())
+        let controller = RedZoneWindowController.shared
+        var written: [String] = []
+
+        for scheme in [ColorScheme.light, .dark] {
+            let suffix = scheme == .dark ? "dark" : "light"
+            let expanded = RedZoneExpandedView(controller: controller)
+                .environment(gameStore)
+                .environment(redZone)
+                .environment(fantasyStore)
+                .environment(Preferences.shared)
+                .environment(\.forcesOpaqueChrome, true)
+                .environment(\.colorScheme, scheme)
+                .background(scheme == .dark ? Color(white: 0.11) : Color(white: 0.97))
+            if let path = PanelCapture.captureView(
+                expanded, to: "\(directory)/redzone-\(suffix).png",
+                size: RedZoneWindowController.expandedSize
+            ) {
+                written.append(path)
+            }
+
+            let pill = RedZonePill(controller: controller)
+                .fixedSize()
+                .padding(8)
+                .environment(gameStore)
+                .environment(redZone)
+                .environment(\.forcesOpaqueChrome, true)
+                .environment(\.colorScheme, scheme)
+                .background(scheme == .dark ? Color(white: 0.11) : Color(white: 0.97))
+            if let path = write(pill, to: "\(directory)/redzone-pill-\(suffix).png") {
+                written.append(path)
+            }
+        }
+        print("featured: \(redZone.spotlightID ?? "none") — \(redZone.spotlightReason)")
+        print("moments: " + redZone.moments.map(\.title).joined(separator: " | "))
+        print("\nwrote:\n" + written.map { "  \($0)" }.joined(separator: "\n"))
+        NSApp.terminate(nil)
+    }
+
+    /// Three live games: Kansas City driving in Buffalo's red zone late in a close one,
+    /// a Seattle blowout, and Detroit at halftime.
+    private static func sampleSlate(kcScore: Int, buffaloBall: Bool) -> [Game] {
+        func team(_ id: String, _ abbr: String, _ score: Int, _ hex: String) -> TeamSide {
+            TeamSide(id: id, abbreviation: abbr, displayName: abbr, shortName: abbr,
+                     score: score, primaryHex: hex)
+        }
+        let kc = team("12", "KC", kcScore, "e31837")
+        let buf = team("2", "BUF", 14, "00338d")
+        let featured = Game(
+            id: "1", shortName: "KC @ BUF", kickoff: .now.addingTimeInterval(-10_000),
+            phase: .live, statusDetail: "", period: 4, displayClock: "2:11",
+            home: buf, away: kc,
+            situation: buffaloBall
+                ? Situation(possessionTeamID: "2", shortDownDistance: "1st & 10",
+                            downDistanceText: "1st & 10 at BUF 25", possessionText: "BUF 25",
+                            down: 1, distance: 10,
+                            lastPlayText: "P.Mahomes pass short middle to T.Kelce for 12 yards, TOUCHDOWN. H.Butker extra point is GOOD, Center-J.Winchester, Holder-M.Araiza.",
+                            lastPlayID: "p2", lastPlayWasScoring: true)
+                : Situation(possessionTeamID: "12", shortDownDistance: "2nd & 4",
+                            downDistanceText: "2nd & 4 at BUF 12", possessionText: "BUF 12",
+                            down: 2, distance: 4, isRedZone: true,
+                            lastPlayText: "(Shotgun) P.Mahomes pass short right to R.Rice to BUF 12 for 9 yards (T.Bernard).",
+                            lastPlayID: "p1")
+        )
+        let blowout = Game(
+            id: "2", shortName: "ARI @ SEA", kickoff: .now.addingTimeInterval(-9_000),
+            phase: .live, statusDetail: "", period: 3, displayClock: "8:40",
+            home: team("26", "SEA", 31, "002244"), away: team("22", "ARI", 3, "97233f"),
+            situation: Situation(possessionTeamID: "26", shortDownDistance: "3rd & 2",
+                                 downDistanceText: "3rd & 2 at SEA 40", possessionText: "SEA 40",
+                                 down: 3, distance: 2,
+                                 lastPlayText: "K.Walker left end to SEA 40 for 4 yards (B.Baker).",
+                                 lastPlayID: "s1")
+        )
+        let halftime = Game(
+            id: "3", shortName: "GB @ DET", kickoff: .now.addingTimeInterval(-6_000),
+            phase: .halftime, statusDetail: "Halftime", period: 2, displayClock: "0:00",
+            home: team("8", "DET", 10, "0076b6"), away: team("9", "GB", 7, "203731")
+        )
+        return [featured, blowout, halftime]
+    }
+}
+
+/// A feed that always answers with the same slate, for offscreen rendering.
+private struct StaticFeed: GameFeed {
+    let games: [Game]
+    func scoreboard() async throws -> ESPNClient.Fetch<[Game]> { .updated(games) }
+    func summary(gameID: String) async throws -> ESPNClient.Fetch<GameDetail> {
+        .updated(GameDetail(gameID: gameID, drives: [], scoringPlayIDs: []))
+    }
+    func allTeams() async throws -> [ESPNClient.Team] { [] }
+}

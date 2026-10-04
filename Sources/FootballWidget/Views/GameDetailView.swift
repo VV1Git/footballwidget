@@ -114,11 +114,11 @@ struct GameDetailView: View {
             }
 
             HStack(alignment: .center, spacing: density == .tiny ? 6 : 12) {
-                scoreBlock(game.away, density)
+                TeamScore(team: game.away, compact: density == .tiny)
                 Text("–")
                     .font(.system(size: 15, weight: .light))
                     .foregroundStyle(.tertiary)
-                scoreBlock(game.home, density)
+                TeamScore(team: game.home, compact: density == .tiny)
             }
 
             if density == .tiny {
@@ -126,7 +126,7 @@ struct GameDetailView: View {
                 // even when the toolbar row above does not.
                 HStack(spacing: 4) {
                     if game.isLive { LivePulse() }
-                    Text(compactStatus)
+                    Text(GameStatusText.compact(game))
                         .font(.system(size: 9, weight: .medium))
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
@@ -161,26 +161,6 @@ struct GameDetailView: View {
         .padding(.vertical, density == .tiny ? 6 : 10)
     }
 
-    private func scoreBlock(_ team: TeamSide, _ density: Density) -> some View {
-        let logo: CGFloat = density == .tiny ? 16 : 24
-        return HStack(spacing: density == .tiny ? 4 : 7) {
-            TeamLogo(url: team.logoURL, fallbackTint: team.tint)
-                .frame(width: logo, height: logo)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(team.abbreviation)
-                    .font(.system(size: density == .tiny ? 10 : 11, weight: .semibold))
-                if density != .tiny, let record = team.record {
-                    Text(record)
-                        .font(.system(size: 9))
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            Text("\(team.score)")
-                .font(.system(size: density == .tiny ? 17 : 24, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-        }
-    }
-
     private var statusPill: some View {
         HStack(spacing: 5) {
             if game.isLive { LivePulse() }
@@ -192,25 +172,6 @@ struct GameDetailView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
         .glassCard(cornerRadius: 8)
-    }
-
-    /// Everything worth knowing on one short line, for the smallest window size.
-    private var compactStatus: String {
-        var parts: [String] = []
-        switch game.phase {
-        case .pre:
-            parts.append(game.statusDetail)
-        case .final:
-            parts.append(game.period > 4 ? "Final/OT" : "Final")
-        case .halftime:
-            parts.append("Half")
-        default:
-            let clock = game.displayClock.isEmpty ? "" : " \(game.displayClock)"
-            parts.append("\(game.periodLabel)\(clock)")
-        }
-        if let team = game.teamWithPossession { parts.append("\(team.abbreviation) ball") }
-        if let down = game.situation?.shortDownDistance, !down.isEmpty { parts.append(down) }
-        return parts.joined(separator: " · ")
     }
 
     private var statusText: String {
@@ -226,12 +187,15 @@ struct GameDetailView: View {
 
     @ViewBuilder
     private func fieldSection(width: CGFloat, density: Density) -> some View {
-        let inset: CGFloat = density == .compact ? 16 : 2 * Metrics.gutter + 16
+        // The scroll view's padding on both sides plus the card's 8pt each side. The
+        // compact figure left the card's padding out, so the ladder was laid out 16pt
+        // wider than it was drawn and its labels ran off the edge.
+        let inset: CGFloat = 2 * (density == .compact ? 8 : Metrics.gutter) + 16
         VStack(alignment: .leading, spacing: 6) {
             if let drive = activeDrive {
                 if density != .tiny {
                 HStack(spacing: 6) {
-                    Text(drive.isCurrent ? "Current drive" : drive.result)
+                    Text(drive.isCurrent ? "Current drive" : drive.outcome ?? drive.result)
                         .font(.system(size: 10, weight: .semibold))
                         .lineLimit(1)
                     if density == .regular {
@@ -408,9 +372,9 @@ struct DriveRowView: View {
                     .frame(width: 30, alignment: .leading)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(drive.isCurrent ? "In progress" : drive.result)
-                        .font(.system(size: 10, weight: drive.isScore ? .semibold : .regular))
-                        .foregroundStyle(drive.isScore ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.primary))
+                    Text(drive.isCurrent ? "In progress" : drive.outcome ?? drive.result)
+                        .font(.system(size: 10, weight: drive.offenseScored ? .semibold : .regular))
+                        .foregroundStyle(drive.offenseScored ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.primary))
                     Text(drive.summary)
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)

@@ -1,23 +1,37 @@
 import Foundation
 
-/// One rostered player's scoring moving, with whatever the play feed could tell us
-/// about why.
+/// One play scoring for a rostered player.
 public struct FantasyMoment: Sendable, Hashable {
+    /// His `points` are his total for the game so far, this play included.
     public var player: RosterPlayer
     public var isMine: Bool
-    /// Points gained since the last poll. Already rounded to two places.
+    /// What the play changed his score by. Already rounded to two places.
     public var delta: Double
-    /// The play credited with the change, if one could be identified.
+    /// The play that scored.
     public var playText: String?
     public var isTouchdown: Bool
+    /// The play the points belong to. A player alerts at most once per play.
+    public var playID: String?
+    /// Everything the play is worth to him. Scored from the play itself, so it is the
+    /// same figure as `delta`; kept apart so a caller with a running figure for the play
+    /// can judge it on that. Without a play it is just `delta`.
+    public var pointsOnPlay: Double
+    /// Points that belong to a play long gone — a correction, or a play from before
+    /// anyone was watching. Never worth an interruption.
+    public var isCorrection: Bool
 
     public init(player: RosterPlayer, isMine: Bool, delta: Double,
-                playText: String?, isTouchdown: Bool) {
+                playText: String?, isTouchdown: Bool,
+                playID: String? = nil, pointsOnPlay: Double? = nil,
+                isCorrection: Bool = false) {
         self.player = player
         self.isMine = isMine
         self.delta = delta
         self.playText = playText
         self.isTouchdown = isTouchdown
+        self.playID = playID
+        self.pointsOnPlay = pointsOnPlay ?? delta
+        self.isCorrection = isCorrection
     }
 }
 
@@ -37,17 +51,26 @@ public struct FantasyAlertSettings: Sendable {
 
 public enum FantasyAlertRules {
 
+    /// The least a touchdown play can be worth to the player who scored or threw it,
+    /// in any common scoring: four for a passing touchdown, six for the rest. A
+    /// touchdown worth less than that in his league — none for throwing one, say — is
+    /// held to the threshold like any other play.
+    public static let touchdownFloor = 4.0
+
     /// `leagueName` is included in the banner when more than one league is connected,
     /// so "Yours · Ja'Marr Chase +12.4" says which team of yours it was for.
+    /// `leagueID` keys the alert, so it stays the same if the league is renamed.
     public static func events(
         moments: [FantasyMoment],
         matchup: FantasyMatchup,
         settings: FantasyAlertSettings,
-        leagueName: String? = nil
+        leagueName: String? = nil,
+        leagueID: String? = nil
     ) -> [AlertEvent] {
         guard settings.enabled else { return [] }
         return moments.compactMap {
-            event(for: $0, matchup: matchup, settings: settings, leagueName: leagueName)
+            event(for: $0, matchup: matchup, settings: settings,
+                  leagueName: leagueName, leagueID: leagueID)
         }
     }
 
@@ -55,28 +78,39 @@ public enum FantasyAlertRules {
         for moment: FantasyMoment,
         matchup: FantasyMatchup,
         settings: FantasyAlertSettings,
-        leagueName: String? = nil
+        leagueName: String? = nil,
+        leagueID: String? = nil
     ) -> AlertEvent? {
         guard qualifies(moment, settings: settings) else { return nil }
 
         let side = moment.isMine ? "Yours" : "Opp"
-        let points = formatted(moment.delta, signed: true)
+        let points = formatted(moment.pointsOnPlay, signed: true)
         let total = formatted(moment.player.points, signed: false)
 
-        var facts = [moment.isTouchdown ? "TD" : moment.player.position.rawValue]
-        facts.append("\(total) total")
-        facts.append(matchupLine(matchup))
-        if let leagueName, !leagueName.isEmpty { facts.append(leagueName) }
+        // Least important last, as that is the end a long line loses first: a long
+        // league name, then the matchup score, so the banner never runs past its line.
+        let facts = [
+            moment.isTouchdown ? "TD" : moment.player.position.rawValue,
+            "\(total) total",
+            matchupLine(matchup),
+            leagueName,
+        ]
+
+        // Keyed to the play, so however often it is scored again — its text corrected,
+        // the feed fetched once more — it alerts once. Keying it to the player's running
+        // total, as it used to be, made every new total a new alert. With no play to key
+        // on the total is all there is. The league is part of the key so the same player
+        // scoring in two leagues alerts for both.
+        let league = leagueID ?? leagueName ?? ""
+        let id = moment.playID.map { "fantasy-\(league)-\(moment.player.id)-play-\($0)" }
+            ?? "fantasy-\(league)-\(moment.player.id)-\(total)"
 
         return AlertEvent(
-            // Keyed to the player's running total so the same play cannot fire twice,
-            // while a genuine second score for the same player still can. The league is
-            // part of the key so the same player scoring in two leagues alerts for both.
-            id: "fantasy-\(leagueName ?? "")-\(moment.player.id)-\(total)",
+            id: id,
             kind: .fantasy,
             title: "\(side) · \(moment.player.fullName) \(points)",
             body: playLine(for: moment) ?? "\(moment.player.fullName) scored \(points)",
-            subtitle: facts.joined(separator: " · ")
+            subtitle: AlertRules.fitSubtitle(facts)
         )
     }
 
@@ -135,10 +169,13 @@ public enum FantasyAlertRules {
     }
 
     static func qualifies(_ moment: FantasyMoment, settings: FantasyAlertSettings) -> Bool {
-        // Stat corrections move totals down hours later; never interrupt for those.
-        guard moment.delta > 0 else { return false }
+        // A play that cost points, or one long gone, is never worth an interruption.
+        guard moment.delta > 0, !moment.isCorrection else { return false }
         if settings.startersOnly && !moment.player.isStarter { return false }
-        return moment.isTouchdown || moment.delta >= settings.threshold
+        // A touchdown alerts whatever the threshold — as long as it is worth a
+        // touchdown's points to him, which a kicker's extra point on the same play is not.
+        if moment.isTouchdown && moment.pointsOnPlay >= touchdownFloor { return true }
+        return moment.pointsOnPlay >= settings.threshold
     }
 
     // MARK: - Text

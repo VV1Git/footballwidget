@@ -29,7 +29,7 @@ enum Diagnose {
             }
         } else {
             print("=== forced refresh ===")
-            store.focus = .list
+            store.setFocus(.list, for: .panel)
             await store.refresh()
         }
 

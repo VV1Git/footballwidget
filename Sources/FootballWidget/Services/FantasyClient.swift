@@ -25,6 +25,7 @@ actor FantasyClient {
         case credentialsRejected
         case leagueNotFound
         case noTeamForSWID
+        case missingSWID
         case status(Int)
         case transport(String)
 
@@ -38,6 +39,8 @@ actor FantasyClient {
                 return "ESPN rejected those cookies. They may have expired — sign in to ESPN again and re-copy them."
             case .leagueNotFound:
                 return "No league with that ID for this season. Check the league ID from your ESPN league URL."
+            case .missingSWID:
+                return "Connected to the league, but your SWID cookie is needed to tell which team is yours."
             case .noTeamForSWID:
                 return "Connected to the league, but no team in it belongs to that SWID. Check you copied the SWID from the right ESPN account."
             case .status(let code):
@@ -64,8 +67,9 @@ actor FantasyClient {
 
     func matchup(credentials: Credentials, season: Int? = nil) async throws -> FantasyMatchup {
         let league = try await league(credentials: credentials, season: season)
+        // The league loaded, so it is not private; the SWID is what finds your team in it.
         guard let swid = credentials.swid, !swid.isEmpty else {
-            throw FantasyError.privateLeague
+            throw FantasyError.missingSWID
         }
         guard let matchup = FantasyMapper.matchup(from: league, swid: swid) else {
             throw FantasyError.noTeamForSWID

@@ -38,12 +38,21 @@ private func moment(
 
 // MARK: - Threshold
 
-@Test func touchdownsAlwaysQualify() {
-    let events = FantasyAlertRules.events(
+/// A touchdown alerts below the threshold, but only once its own points are in. A
+/// +0.4 on a touchdown play is the yardage of the snap before it landing late; it
+/// used to alert as "+0.4 TD", and the touchdown alerted again when its points came.
+@Test func touchdownsQualifyOnceTheirPointsAreIn() {
+    let early = FantasyAlertRules.events(
         moments: [moment(delta: 0.4, touchdown: true)],
         matchup: matchup(), settings: FantasyAlertSettings()
     )
-    #expect(events.count == 1)
+    #expect(early.isEmpty)
+
+    let landed = FantasyAlertRules.events(
+        moments: [moment(delta: 4.6, touchdown: true)],
+        matchup: matchup(), settings: FantasyAlertSettings(threshold: 6.0)
+    )
+    #expect(landed.count == 1)
 }
 
 @Test func smallPlaysAreIgnored() {
@@ -190,4 +199,31 @@ private func moment(
         matchup: matchup(), settings: FantasyAlertSettings()
     ))
     #expect(first.id != second.id)
+}
+
+/// The subtitle has one line of about sixty characters. A long league name is the first
+/// thing to go, then the matchup score, rather than the line running off the banner.
+@Test func aLongLeagueNameIsDroppedBeforeTheSubtitleOverflows() throws {
+    let event = try #require(FantasyAlertRules.events(
+        moments: [moment(delta: 12.4, touchdown: true)],
+        matchup: matchup(mine: 112.36, theirs: 108.94), settings: FantasyAlertSettings(),
+        leagueName: "The Greatest Fantasy Football League Ever Assembled"
+    ).first)
+    let subtitle = try #require(event.subtitle)
+    #expect(subtitle == "TD · 26.7 total · You 112.4 – 108.9")
+    #expect(subtitle.count <= AlertRules.subtitleLimit)
+
+    let short = try #require(FantasyAlertRules.events(
+        moments: [moment(delta: 12.4, touchdown: true)],
+        matchup: matchup(), settings: FantasyAlertSettings(), leagueName: "Scaries"
+    ).first)
+    #expect(short.subtitle == "TD · 26.7 total · You 78.2 – 71.5 · Scaries")
+}
+
+/// A touchdown worth less than a touchdown in his league is held to the threshold like
+/// any other play, instead of being dropped.
+@Test func aCheapTouchdownIsHeldToTheThreshold() {
+    let cheap = moment(delta: 3.2, touchdown: true)
+    #expect(!FantasyAlertRules.qualifies(cheap, settings: FantasyAlertSettings(threshold: 6)))
+    #expect(FantasyAlertRules.qualifies(cheap, settings: FantasyAlertSettings(threshold: 3)))
 }

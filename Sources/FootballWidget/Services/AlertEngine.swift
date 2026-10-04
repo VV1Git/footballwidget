@@ -9,11 +9,30 @@ import FootballCore
 /// live in `FootballCore.AlertRules` where they can be tested without posting anything.
 actor AlertEngine {
     private var snapshots: [String: GameSnapshot] = [:]
-    private var deliveredIDs: Set<String> = []
-    private var authorized: Bool?
+    /// Shared by the NFL and fantasy alerts, and bounded rather than emptied wholesale.
+    private var delivered = DeliveredLog()
+    private var askedForAuthorization = false
+    /// When the scoreboard was last known to be current, changed or not.
+    private var lastScoreboard: Date?
 
-    func process(previous: [Game], current: [Game], preferences: Preferences) async {
+    /// Live polls are at most twenty seconds apart. After a longer gap — the Mac asleep,
+    /// the network down — the snapshots describe the game as it was minutes ago, and
+    /// comparing against them announced a quarter of football as one "SEA +14".
+    static let maximumScoreboardGap: TimeInterval = 150
+
+    /// `muted`: work the events out and log them as delivered, but post nothing. RedZone
+    /// on screen is already showing them, and logging them means none fires late once
+    /// it closes.
+    func process(previous: [Game], current: [Game], preferences: Preferences, muted: Bool = false) async {
         let settings = await MainActor.run { preferences.alertSettings }
+
+        let now = Date.now
+        if let lastScoreboard, now.timeIntervalSince(lastScoreboard) > Self.maximumScoreboardGap {
+            // Every game is seen afresh: nothing fires, and the next poll compares
+            // against now.
+            snapshots = [:]
+        }
+        lastScoreboard = now
 
         for game in current {
             let events = AlertRules.events(
@@ -25,18 +44,20 @@ actor AlertEngine {
             // credited with points, and whether that play was still under review.
             snapshots[game.id] = GameSnapshot(game: game, previous: snapshots[game.id])
 
-            for event in events where deliveredIDs.insert(event.id).inserted {
-                await deliver(event)
+            for event in events where delivered.insert(event.id) {
+                if !muted { await deliver(event) }
             }
         }
 
         // Forget games that have dropped off the slate.
         let ids = Set(current.map(\.id))
         snapshots = snapshots.filter { ids.contains($0.key) }
+    }
 
-        // The delivered set is only for de-duplication within a session; cap it so a
-        // long Sunday cannot grow it without bound.
-        if deliveredIDs.count > 500 { deliveredIDs.removeAll() }
+    /// A poll that came back identical to the last one still counts as having looked:
+    /// a halftime with nothing changing must not read as a gap.
+    func scoreboardUnchanged() {
+        lastScoreboard = .now
     }
 
     /// Fantasy moments arrive already diffed by `FantasyStore`; the rules decide which
@@ -46,12 +67,14 @@ actor AlertEngine {
         moments: [FantasyMoment],
         matchup: FantasyMatchup,
         settings: FantasyAlertSettings,
-        leagueName: String? = nil
+        leagueName: String? = nil,
+        leagueID: String? = nil
     ) async {
         let events = FantasyAlertRules.events(
-            moments: moments, matchup: matchup, settings: settings, leagueName: leagueName
+            moments: moments, matchup: matchup, settings: settings,
+            leagueName: leagueName, leagueID: leagueID
         )
-        for event in events where deliveredIDs.insert(event.id).inserted {
+        for event in events where delivered.insert(event.id) {
             await deliver(event)
         }
     }
@@ -59,7 +82,7 @@ actor AlertEngine {
     // MARK: - Delivery
 
     private func deliver(_ event: AlertEvent) async {
-        guard await ensureAuthorized() else { return }
+        guard await isAuthorized() else { return }
 
         // A banner gives the title and subtitle one line each and the body about two, so
         // the rules put who scored / who has the ball in the first two. The body is often
@@ -83,18 +106,31 @@ actor AlertEngine {
         }
     }
 
-    private func ensureAuthorized() async -> Bool {
-        if let authorized { return authorized }
+    /// Asks for permission at launch, off the poll path. Asking from inside the first
+    /// delivery held that poll — and both poll loops behind it — until the prompt was
+    /// answered.
+    func requestAuthorization() async {
         // An unbundled binary has no notification identity, and asking would trap.
-        guard Bundle.main.bundleIdentifier != nil else {
-            authorized = false
-            return false
-        }
+        guard Bundle.main.bundleIdentifier != nil, !askedForAuthorization else { return }
+        askedForAuthorization = true
         let granted = (try? await UNUserNotificationCenter.current()
             .requestAuthorization(options: [.alert, .sound])) ?? false
-        authorized = granted
         if !granted { NSLog("[FootballWidget] notifications not authorized") }
-        return granted
+    }
+
+    /// Read from the system each time rather than remembered: turning notifications on
+    /// in System Settings used to need a relaunch to take effect.
+    private func isAuthorized() async -> Bool {
+        guard Bundle.main.bundleIdentifier != nil else { return false }
+        switch await UNUserNotificationCenter.current().notificationSettings().authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            return true
+        case .notDetermined:
+            Task { await requestAuthorization() }
+            return false
+        default:
+            return false
+        }
     }
 }
 

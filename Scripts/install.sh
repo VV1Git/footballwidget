@@ -10,7 +10,11 @@ DEST="/Applications/FootballWidget.app"
 
 echo "==> stopping any running copy"
 pkill -x FootballWidget 2>/dev/null || true
-sleep 1
+# A copy that finds another already running quits, so the old one must be gone first.
+for _ in $(seq 1 50); do
+    pgrep -x FootballWidget >/dev/null || break
+    sleep 0.1
+done
 
 echo "==> installing to $DEST"
 rm -rf "$DEST"

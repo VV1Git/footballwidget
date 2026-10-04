@@ -19,6 +19,9 @@ struct FantasySettingsView: View {
     private enum CodeStatus: Equatable {
         case idle
         case accepted(league: String)
+        /// The code carried cookies but no league: it was run somewhere other than a
+        /// league page. The cookies are still worth keeping.
+        case cookiesOnly
         case badCode
     }
 
@@ -243,6 +246,9 @@ struct FantasySettingsView: View {
     @ViewBuilder
     private var statusRow: some View {
         switch (codeStatus, fantasy.state) {
+        case (.cookiesOnly, _):
+            label("Cookies saved, but the code had no league in it. Run it again on your league's page, or paste the league ID below.",
+                  "exclamationmark.circle", .orange)
         case (.badCode, _):
             label("That doesn't look like a setup code. It should start with FW1.",
                   "exclamationmark.triangle.fill", .orange)
@@ -307,13 +313,20 @@ struct FantasySettingsView: View {
 
         CredentialStore.write(code.espnS2, for: .espnS2)
         CredentialStore.write(FantasyClient.bracedSWID(code.swid), for: .swid)
-        preferences.addFantasyLeague(league)
-
-        leagueInput = ""
         swid = FantasyClient.bracedSWID(code.swid)
         espnS2 = "••••••••••••••••"
         setupCode = ""
-        codeStatus = .accepted(league: league.isEmpty ? "—" : league)
+
+        // Without a league there is nothing to connect, and "Connecting…" would have sat
+        // there for good.
+        guard !league.isEmpty else {
+            codeStatus = .cookiesOnly
+            if fantasy.isConfigured { fantasy.reconnect() }
+            return
+        }
+        preferences.addFantasyLeague(league)
+        leagueInput = ""
+        codeStatus = .accepted(league: league)
 
         fantasy.reconnect()
     }

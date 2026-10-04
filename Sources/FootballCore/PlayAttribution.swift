@@ -1,16 +1,13 @@
 import Foundation
 
-/// Works out which rostered players a play involved, so the field map can show what a
-/// play was worth to your lineup.
+/// Works out which rostered players a play involved, and the name rules everything that
+/// reads players out of play text shares.
 ///
 /// ESPN's play feed carries no per-player breakdown — plays have `teamParticipants`
 /// but no `participants` array — so involvement is read out of the play text, which
-/// names players as first-initial-dot-surname ("S.Darnold", "J.Smith-Njigba").
-///
-/// Points are never recomputed here. ESPN stays the source of truth: when a player's
-/// `appliedStatTotal` moves between polls, that delta is attributed to the most recent
-/// play naming them. Where that is ambiguous the attribution is dropped rather than
-/// guessed.
+/// names players as first-initial-dot-surname ("S.Darnold", "J.Smith-Njigba"). What a
+/// play was worth is worked out by `FantasyGameScorer`; this only says who was there.
+/// Where a name is ambiguous it is dropped rather than guessed.
 public enum PlayAttribution {
 
     /// A rostered player the play named, and what it was worth if we know.
@@ -19,8 +16,8 @@ public enum PlayAttribution {
         public var playerName: String
         public var isMine: Bool
         public var position: FantasyPosition
-        /// Nil when the player was named but no scoring delta has been tied to the play
-        /// — a tackler, a blocker, or points that have not landed yet.
+        /// Nil when the player was named but the play earned him nothing — a tackler, a
+        /// blocker, an incompletion thrown his way.
         public var points: Double?
 
         public init(playerID: Int, playerName: String, isMine: Bool,
@@ -35,23 +32,24 @@ public enum PlayAttribution {
 
     // MARK: - Name parsing
 
-    /// Matches "S.Darnold" and "J.Smith-Njigba", apostrophes and hyphens included.
-    /// `NSRegularExpression` is thread-safe once built, so one instance is reused
-    /// rather than recompiling the pattern for each of a game's ~180 plays.
+    /// Matches "S.Darnold" and "J.Smith-Njigba", apostrophes and hyphens included, and
+    /// the longer forms ESPN uses to tell players apart — "Bi.Robinson" for Bijan,
+    /// "A.St. Brown", "G.Van Roten" — the same shapes `PlaySummary` reads.
+    /// `NSRegularExpression` is thread-safe once built, so one instance is reused rather
+    /// than recompiling the pattern for each of a game's ~180 plays.
     nonisolated(unsafe) private static let nameToken = try! NSRegularExpression(
-        pattern: "\\b([A-Z])\\.([A-Z][A-Za-z'\\-]+)"
+        pattern: "\\b([A-Z][a-z]{0,2})\\.((?:St\\. |Van )?[A-Z][A-Za-z'\\-]+)"
     )
 
     /// Every `F.Lastname` token in a play description, in order of appearance.
-    public static func names(in text: String) -> [(initial: Character, surname: String)] {
+    public static func names(in text: String) -> [(initial: String, surname: String)] {
         let range = NSRange(text.startIndex..., in: text)
         return nameToken.matches(in: text, range: range).compactMap { match in
             guard match.numberOfRanges >= 3,
                   let initialRange = Range(match.range(at: 1), in: text),
-                  let surnameRange = Range(match.range(at: 2), in: text),
-                  let initial = text[initialRange].first
+                  let surnameRange = Range(match.range(at: 2), in: text)
             else { return nil }
-            return (initial, String(text[surnameRange]))
+            return (String(text[initialRange]), String(text[surnameRange]))
         }
     }
 
@@ -87,11 +85,23 @@ public enum PlayAttribution {
         return found
     }
 
-    static func matches(player: RosterPlayer, initial: Character, surname: String) -> Bool {
-        guard let playerInitial = player.firstName.first else { return false }
-        guard String(playerInitial).caseInsensitiveCompare(String(initial)) == .orderedSame
+    static func matches(player: RosterPlayer, initial: String, surname: String) -> Bool {
+        guard !initial.isEmpty,
+              player.firstName.lowercased().hasPrefix(initial.lowercased())
         else { return false }
-        return normalize(player.lastName) == normalize(surname)
+        return normalize(baseSurname(player.lastName)) == normalize(surname)
+    }
+
+    /// A surname as play text writes it. ESPN's fantasy rosters keep the generational
+    /// suffix — "Cook III", "Thomas Jr.", "Godwin Jr." — and play text never does
+    /// ("J.Cook"), so those players were never found in a single play.
+    public static func baseSurname(_ lastName: String) -> String {
+        var words = lastName.split(separator: " ").map(String.init)
+        let suffixes: Set<String> = ["jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "v"]
+        while words.count > 1, let last = words.last, suffixes.contains(last.lowercased()) {
+            words.removeLast()
+        }
+        return words.joined(separator: " ")
     }
 
     /// ESPN is inconsistent about punctuation between feeds ("Smith-Njigba" vs
@@ -102,12 +112,11 @@ public enum PlayAttribution {
 
     // MARK: - Crediting
 
-    /// Attaches known point deltas to the players a play named.
+    /// Attaches known points to the players a play named.
     ///
-    /// `deltas` maps player id to points gained since the last poll. A player named by
-    /// the play but absent from `deltas` still returns a credit with `points == nil`,
-    /// which is how the field map shows "your guy was involved" without inventing a
-    /// number.
+    /// `deltas` maps player id to what the play was worth to him. A player named by the
+    /// play but absent from `deltas` still returns a credit with `points == nil`, which
+    /// is how the field map shows "your guy was involved" without inventing a number.
     public static func credits(
         forPlayText text: String,
         candidates: [(player: RosterPlayer, isMine: Bool)],
@@ -122,66 +131,5 @@ public enum PlayAttribution {
                 points: deltas[entry.player.id]
             )
         }
-    }
-
-    /// Point deltas between two polls, keyed by player id.
-    ///
-    /// Downward revisions are kept — ESPN issues stat corrections — but callers should
-    /// not raise notifications for them.
-    public static func deltas(
-        previous: [Int: Double],
-        current: [Int: Double]
-    ) -> [Int: Double] {
-        var result: [Int: Double] = [:]
-        for (id, points) in current {
-            guard let before = previous[id] else { continue }   // first sighting: silent
-            // Fantasy scoring is two decimal places, but subtracting doubles is not:
-            // 16.4 - 10.0 comes out as 6.399999999999999, which would both display
-            // wrong and sit just under a 6.0 alert threshold.
-            let delta = ((points - before) * 100).rounded() / 100
-            if abs(delta) >= 0.01 { result[id] = delta }
-        }
-        return result
-    }
-
-    /// Whether a play's text describes something that could have moved a fantasy total.
-    ///
-    /// Being named is not enough. ESPN's fantasy totals trail the play feed by a poll or
-    /// two, so by the time a catch's points land the newest play naming the receiver can
-    /// be the next snap, an incompletion thrown his way, and that snap got the +3.8
-    /// that belongs to the catch before it. An incompletion or a play wiped out by a
-    /// penalty scores nothing for anyone it names, so it is never a candidate.
-    public static func canScore(playText text: String) -> Bool {
-        switch PlaySummary.parse(text).kind {
-        case .incompletePass, .noPlay, .underReview: return false
-        default: return true
-        }
-    }
-
-    /// The newest play in a game whose text names this player and could have scored.
-    ///
-    /// Drives arrive newest-first and plays within a drive run oldest-first, so the
-    /// search walks drives forward and plays backward to find the most recent mention.
-    public static func mostRecentPlay(
-        naming player: RosterPlayer,
-        in detail: GameDetail
-    ) -> Play? {
-        let candidate: [(player: RosterPlayer, isMine: Bool)] = [(player, true)]
-        for drive in detail.drives {
-            for play in drive.plays.reversed() where play.kind != .administrative {
-                if !players(namedIn: play.text, candidates: candidate).isEmpty,
-                   canScore(playText: play.text) {
-                    return play
-                }
-            }
-        }
-        return nil
-    }
-
-    /// Flattens a matchup into the id → points map the diffing works on.
-    public static func pointsByPlayer(_ matchup: FantasyMatchup) -> [Int: Double] {
-        var result: [Int: Double] = [:]
-        for entry in matchup.allPlayers { result[entry.player.id] = entry.player.points }
-        return result
     }
 }

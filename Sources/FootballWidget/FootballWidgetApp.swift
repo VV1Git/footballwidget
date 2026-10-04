@@ -7,6 +7,7 @@ struct FootballWidgetApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var store: GameStore
     @State private var fantasy: FantasyStore
+    @State private var redZone: RedZoneStore
     @State private var preferences = Preferences.shared
     /// Keeps the icon visible briefly after launch so "hide when idle" can never
     /// strand the user with no way back into Settings.
@@ -29,8 +30,16 @@ struct FootballWidgetApp: App {
         let alerts = AlertEngine()
         let games = GameStore(feed: feed, alerts: alerts)
         let fantasy = FantasyStore(alerts: alerts)
+        // The RedZone feed follows every scoreboard poll from launch, so it already has
+        // the afternoon's moments when its window first appears.
+        let redZone = RedZoneStore()
+        redZone.fantasy = fantasy
+        games.onScoreboard = { [weak redZone] games, changed in
+            redZone?.ingest(games, changed: changed)
+        }
         _store = State(initialValue: games)
         _fantasy = State(initialValue: fantasy)
+        _redZone = State(initialValue: redZone)
     }
 
     var body: some Scene {
@@ -38,6 +47,7 @@ struct FootballWidgetApp: App {
             PanelRootView()
                 .environment(store)
                 .environment(fantasy)
+                .environment(redZone)
                 .environment(preferences)
         } label: {
             MenuBarLabel()
@@ -54,6 +64,10 @@ struct FootballWidgetApp: App {
                         await FantasyDump.run(path: path, preferences: preferences)
                         return
                     }
+                    if let directory = Snapshot.requestedRedZoneDirectory {
+                        await Snapshot.runRedZone(directory: directory)
+                        return
+                    }
                     if let directory = Snapshot.requestedDirectory {
                         await Snapshot.run(directory: directory)
                         return
@@ -63,6 +77,8 @@ struct FootballWidgetApp: App {
                     fantasy.attach(to: store)
                     store.start()
                     fantasy.start()
+                    // Comes back if it was open at quit; shows itself once a game is live.
+                    RedZoneWindowController.shared.attach(store: store, redZone: redZone, fantasy: fantasy)
                     if PreviewWindowController.isRequested {
                         PreviewWindowController.show(store: store, fantasy: fantasy, preferences: preferences)
                     }
@@ -103,6 +119,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Menu bar only — no Dock icon, no window on launch. `LSUIElement` covers this
         // in the bundle; setting it here too keeps `swift run` behaving the same.
         NSApp.setActivationPolicy(.accessory)
+
+        // Two copies running — the installed app and a stray build of it, say — each
+        // poll and each post every notification, so every alert arrived twice. The one
+        // that started second leaves. The command-line tools run beside the real app on
+        // purpose, so a copy started as one never quits for this.
+        let toolArguments = ["--diagnose", "--snapshot", "--snapshot-redzone", "--dump-fantasy",
+                             "--preview", "--replay"]
+        if let id = Bundle.main.bundleIdentifier,
+           !CommandLine.arguments.contains(where: toolArguments.contains) {
+            let me = ProcessInfo.processInfo.processIdentifier
+            let others = NSRunningApplication.runningApplications(withBundleIdentifier: id)
+                .filter { $0.processIdentifier != me }
+            if !others.isEmpty {
+                NSLog("[FootballWidget] another copy is already running; quitting this one")
+                NSApp.terminate(nil)
+            }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

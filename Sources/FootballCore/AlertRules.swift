@@ -135,8 +135,15 @@ public enum AlertRules {
         let turnover = settings.turnovers ? turnoverEvent(previous: previous, game: game, play: play) : nil
         if let scoring { events.append(scoring) }
         // A pick-six is one moment. The scoring banner already names who picked it off,
-        // so a second "INT" banner for the same snap would only be noise.
-        if let turnover, scoring == nil || play.touchdown == nil {
+        // so a second "INT" banner for the same snap would only be noise. The same goes
+        // when the score moved on an earlier poll than the text: the touchdown went out
+        // then as a plain "TD DEN", and "TD DEN · pick-six" now would be a second banner
+        // for one play. When the text arrives first, the scoring banner a poll later
+        // carries the names.
+        let scoreUnchanged = game.home.score == previous.homeScore
+            && game.away.score == previous.awayScore
+        let touchdownLeftToScoring = settings.scoring && play.touchdown != nil && scoreUnchanged
+        if let turnover, scoring == nil || play.touchdown == nil, !touchdownLeftToScoring {
             events.append(turnover)
         }
         // The turnover banner already says where the new offense has the ball.

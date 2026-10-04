@@ -62,6 +62,10 @@ final class Preferences {
         static let fantasyThreshold = "fantasyAlertThreshold"
         static let collapsedSections = "collapsedSections"
         static let showsAllPlayText = "showsAllPlayText"
+        static let redZoneOpen = "redZoneOpen"
+        static let redZoneMini = "redZoneMini"
+        static let redZoneCorner = "redZoneCorner"
+        static let redZoneDisplayID = "redZoneDisplayID"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -88,6 +92,10 @@ final class Preferences {
         _fantasyThreshold = defaults.object(forKey: Key.fantasyThreshold) as? Double ?? 6.0
         _collapsedSections = Set(defaults.stringArray(forKey: Key.collapsedSections) ?? [])
         _showsAllPlayText = defaults.object(forKey: Key.showsAllPlayText) as? Bool ?? false
+        _redZoneOpen = defaults.object(forKey: Key.redZoneOpen) as? Bool ?? false
+        _redZoneMini = defaults.object(forKey: Key.redZoneMini) as? Bool ?? false
+        _redZoneCorner = defaults.string(forKey: Key.redZoneCorner) ?? "bottomRight"
+        _redZoneDisplayID = defaults.object(forKey: Key.redZoneDisplayID) as? Int ?? 0
     }
 
     // Backing storage is written through on every change so the app has no separate
@@ -190,6 +198,51 @@ final class Preferences {
             next.insert(kind.rawValue)
         }
         collapsedSections = next
+    }
+
+    // MARK: - RedZone
+
+    // Stored so RedZone comes back the way it was left: open or not, pill or full size,
+    // and in which corner of which display.
+
+    /// Whether the user has RedZone switched on. It is only on screen while a game is live.
+    private var _redZoneOpen: Bool
+    var redZoneOpen: Bool {
+        get { access(keyPath: \.redZoneOpen); return _redZoneOpen }
+        set { withMutation(keyPath: \.redZoneOpen) {
+            _redZoneOpen = newValue
+            defaults.set(newValue, forKey: Key.redZoneOpen)
+        } }
+    }
+
+    /// Shrunk to the one-line pill rather than the full window.
+    private var _redZoneMini: Bool
+    var redZoneMini: Bool {
+        get { access(keyPath: \.redZoneMini); return _redZoneMini }
+        set { withMutation(keyPath: \.redZoneMini) {
+            _redZoneMini = newValue
+            defaults.set(newValue, forKey: Key.redZoneMini)
+        } }
+    }
+
+    /// A `ScreenCorner` raw value.
+    private var _redZoneCorner: String
+    var redZoneCorner: String {
+        get { access(keyPath: \.redZoneCorner); return _redZoneCorner }
+        set { withMutation(keyPath: \.redZoneCorner) {
+            _redZoneCorner = newValue
+            defaults.set(newValue, forKey: Key.redZoneCorner)
+        } }
+    }
+
+    /// The display it was last placed on, as a `CGDirectDisplayID`; 0 when not known.
+    private var _redZoneDisplayID: Int
+    var redZoneDisplayID: Int {
+        get { access(keyPath: \.redZoneDisplayID); return _redZoneDisplayID }
+        set { withMutation(keyPath: \.redZoneDisplayID) {
+            _redZoneDisplayID = newValue
+            defaults.set(newValue, forKey: Key.redZoneDisplayID)
+        } }
     }
 
     // MARK: - Fantasy

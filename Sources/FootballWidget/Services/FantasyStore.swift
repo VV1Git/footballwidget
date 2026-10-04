@@ -2,8 +2,9 @@ import Foundation
 import Observation
 import FootballCore
 
-/// Owns your fantasy matchup: polls the league, works out what changed, ties changes to
-/// the plays that caused them, and hands the results to the views and the alert engine.
+/// Owns your fantasy matchup: polls the league for the matchup and its scoring table,
+/// scores every play of your players' games as the play feed brings it in, and hands the
+/// results to the views and the alert engine.
 @MainActor
 @Observable
 final class FantasyStore {
@@ -30,17 +31,43 @@ final class FantasyStore {
     /// body. Absent when there is no opponent or nothing honest to show.
     private(set) var winProbabilities: [String: WinProbability] = [:]
 
+    /// Per league: how the plays' own points compare with ESPN's totals. See
+    /// `checkAgainstESPN`.
+    private(set) var accuracy: [String: FantasyAccuracy] = [:]
+    /// League id → player id → what his scored plays add up to in this game.
+    @ObservationIgnored private var computedTotals: [String: [Int: Double]] = [:]
+    /// "league|player" → when his figure and ESPN's first disagreed.
+    @ObservationIgnored private var disagreeingSince: [String: Date] = [:]
+
     private let client: FantasyClient
     private let preferences: Preferences
     private let alerts: AlertEngine
     private weak var games: GameStore?
 
-    /// Last seen points per player, per league, for diffing.
-    private var previousPoints: [String: [Int: Double]] = [:]
-    /// Points banked against the play that earned them: play id → player id → points.
-    /// Accumulated as deltas arrive, because ESPN never reports points per play.
-    /// Restored from disk so a relaunch does not wipe every chip off the field map.
-    private var pointsByPlay: [String: [Int: Double]] = PlayPointsStore.load()
+    /// What every play was worth, per league, for the chips. Worked out again from the
+    /// feeds whenever they or the matchups change, so it needs no saving: a relaunch
+    /// fills it back in, plays from before the launch included, as soon as the feeds load.
+    @ObservationIgnored private var ledger = FantasyLedger()
+    /// Game id → play id → the text last parsed and what it said. A feed is scored again
+    /// on every change and every fantasy poll; only a new or rewritten play is parsed.
+    @ObservationIgnored private var summaries: [String: [String: (text: String, summary: PlaySummary)]] = [:]
+    /// Game id → the feed last read, the scorer built from it and each player's lines,
+    /// reused while the feed is unchanged — which on most fantasy polls it is.
+    @ObservationIgnored private var scored: [String: ScoredFeed] = [:]
+
+    private struct ScoredFeed {
+        var detail: GameDetail
+        var scorer: FantasyGameScorer
+        /// Player id → his stat line for every play. The same in every league; only the
+        /// points differ.
+        var lines: [Int: [FantasyPlayLine]] = [:]
+    }
+    /// Game id → "league|player|play" keys already judged for an alert, so a play is
+    /// weighed once per player per league however often it is scored again.
+    @ObservationIgnored private var judged: [String: Set<String>] = [:]
+    /// Game id → the same keys for plays last seen under review, and when. The ruling is
+    /// what gets judged, and it can come a few minutes after the play first appeared.
+    @ObservationIgnored private var awaitingRuling: [String: [String: Date]] = [:]
     private var loop: Task<Void, Never>?
 
     init(client: FantasyClient = FantasyClient(),
@@ -67,6 +94,11 @@ final class FantasyStore {
 
     func attach(to games: GameStore) {
         self.games = games
+        // A play is scored the moment its feed brings it in, rather than whenever ESPN's
+        // fantasy totals next move.
+        games.onFeedUpdate = { [weak self] gameID, detail in
+            self?.feedUpdated(gameID: gameID, detail: detail)
+        }
     }
 
     // MARK: - Derived
@@ -172,31 +204,41 @@ final class FantasyStore {
         loop = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refresh()
-                let seconds = self?.pollInterval ?? 60
-                try? await Task.sleep(for: .seconds(seconds))
+                // Waits in short steps rather than one long sleep, so the interval is
+                // looked at again as games start. One five-minute sleep taken before the
+                // slate had loaded, or just before a kickoff, left the next poll minutes
+                // away while football was being played.
+                let finished = Date.now
+                while !Task.isCancelled {
+                    guard let interval = self?.pollInterval else { return }
+                    if Date.now.timeIntervalSince(finished) >= TimeInterval(interval) { break }
+                    try? await Task.sleep(for: .seconds(Self.pollStep))
+                }
             }
         }
     }
+
+    private static let pollStep = 5
 
     func stop() {
         loop?.cancel()
         loop = nil
     }
 
-    /// Fantasy totals only move when football is being played, and they lag the play
-    /// feed by a few seconds anyway, so there is no point polling faster than this.
+    /// Fantasy totals only move when football is being played, and plays are scored from
+    /// the play feed as it arrives, so the league itself needs no faster polling than this.
     private var pollInterval: Int {
         guard isConfigured else { return 300 }
-        guard let games, !games.liveGames.isEmpty else { return 300 }
-        return 15
+        guard let games else { return 300 }
+        // Until the first scoreboard lands there is no telling whether games are on.
+        guard games.lastUpdated != nil else { return 15 }
+        return games.liveGames.isEmpty ? 300 : 15
     }
 
     /// Called after credentials change, to retry immediately rather than waiting.
     func reconnect() {
         CredentialStore.invalidateCache()
-        previousPoints = [:]
-        pointsByPlay = [:]
-        PlayPointsStore.clear()
+        forgetScoring()
         creditsByPlay = [:]
         matchups = [:]
         states = [:]
@@ -209,12 +251,13 @@ final class FantasyStore {
         preferences.removeFantasyLeague(leagueID)
         matchups[leagueID] = nil
         states[leagueID] = nil
-        previousPoints[leagueID] = nil
         winProbabilities[leagueID] = nil
+        accuracy[leagueID] = nil
+        computedTotals[leagueID] = nil
+        ledger.removeLeague(leagueID)
         if leagueIDs.isEmpty {
             games?.trackedGameIDs = []
             creditsByPlay = [:]
-            pointsByPlay = [:]
         } else {
             rebuildCredits()
             updateTrackedGames()
@@ -245,36 +288,62 @@ final class FantasyStore {
 
         lastUpdated = .now
         updateTrackedGames()
-        rebuildCredits()
+        // The lineups, the starters or the scoring table may have changed, and a feed
+        // that arrived before the first matchup did has not been scored at all.
+        scoreAllGames()
         updateWinProbabilities()
+        checkAgainstESPN(now: .now)
+    }
+
+    // MARK: - Checking against ESPN
+
+    /// ESPN's totals trail the play feed by up to a minute or so; a difference that
+    /// outlasts this is a real one.
+    private static let settleTime: TimeInterval = 180
+
+    /// Points come from scoring each play ourselves, and ESPN's totals are still polled
+    /// for the matchup — so each poll is a chance to check one against the other. A
+    /// starter whose plays add up to something other than ESPN's figure for longer than
+    /// ESPN takes to catch up is logged and listed in the matchup view.
+    ///
+    /// Team defenses are left out: their points-allowed and yards-allowed tiers belong
+    /// to no play, so their plays never add up to their total.
+    private func checkAgainstESPN(now: Date) {
+        var result: [String: FantasyAccuracy] = [:]
+        var stillDisagreeing: [String: Date] = [:]
+        for (leagueID, matchup) in allMatchups {
+            let computed = computedTotals[leagueID] ?? [:]
+            var report = FantasyAccuracy()
+            for entry in matchup.allPlayers where entry.player.isStarter && entry.player.position != .defense {
+                guard let ours = computed[entry.player.id] else { continue }
+                report.checked += 1
+                let espn = entry.player.points
+                guard abs(ours - espn) >= 0.05 else { continue }
+                let key = "\(leagueID)|\(entry.player.id)"
+                let since = disagreeingSince[key] ?? now
+                stillDisagreeing[key] = since
+                guard now.timeIntervalSince(since) >= Self.settleTime else { continue }
+                if now.timeIntervalSince(since) < Self.settleTime + 20 {
+                    NSLog("[FootballWidget] \(matchup.leagueName): \(entry.player.fullName) plays add up to \(ours), ESPN has \(espn)")
+                }
+                report.mismatches.append(.init(playerID: entry.player.id, name: entry.player.fullName,
+                                               ours: ours, espn: espn))
+            }
+            result[leagueID] = report
+        }
+        disagreeingSince = stillDisagreeing
+        if result != accuracy { accuracy = result }
     }
 
     private func refresh(leagueID: String, credentials: FantasyClient.Credentials) async {
         do {
             let fresh = try await client.matchup(credentials: credentials)
-            let current = PlayAttribution.pointsByPlayer(fresh)
-            let deltas = PlayAttribution.deltas(
-                previous: previousPoints[leagueID] ?? [:], current: current
-            )
-
             // Only written when changed. Assigning a whole property an equal value is
             // free, but writing through a dictionary subscript notifies every view that
             // reads the dictionary, equal or not — so an unchanged matchup re-ran every
             // game row and the detail view on each poll.
             if matchups[leagueID] != fresh { matchups[leagueID] = fresh }
-            previousPoints[leagueID] = current
             if states[leagueID] != .connected { states[leagueID] = .connected }
-
-            let moments = attribute(deltas: deltas, matchup: fresh)
-            if !moments.isEmpty {
-                await alerts.processFantasy(
-                    moments: moments,
-                    matchup: fresh,
-                    settings: preferences.fantasyAlertSettings,
-                    // Only worth naming the league when there is more than one.
-                    leagueName: leagueIDs.count > 1 ? fresh.leagueName : nil
-                )
-            }
         } catch {
             let message = (error as? FantasyClient.FantasyError)?.errorDescription
                 ?? error.localizedDescription
@@ -282,11 +351,13 @@ final class FantasyStore {
         }
     }
 
-    /// Ask the NFL store for play-by-play on every game containing someone in the
-    /// matchup, so alerts can quote the play even for games you are not watching.
+    /// Ask the NFL store for play-by-play on every game containing a starter on either
+    /// side of a matchup, so his plays are scored even in games you are not watching.
+    /// A bench player scores for nobody, and tracking his game only cost a feed.
     private func updateTrackedGames() {
         guard let games else { return }
         let teams = Set(allMatchups.flatMap { $0.matchup.allPlayers }
+            .filter(\.player.isStarter)
             .compactMap(\.player.proTeamID).map(String.init))
         let ids = games.games
             .filter { teams.contains($0.home.id) || teams.contains($0.away.id) }
@@ -319,109 +390,190 @@ final class FantasyStore {
         if result != winProbabilities { winProbabilities = result }
     }
 
-    // MARK: - Attribution
+    // MARK: - Scoring plays
 
-    /// Ties each point change to the play that most likely caused it.
-    private func attribute(deltas: [Int: Double], matchup: FantasyMatchup) -> [FantasyMoment] {
-        guard !deltas.isEmpty else { return [] }
+    /// A play first seen longer ago than this is not news — the league was added
+    /// mid-game, or its feed was scored late — so it gets its chip but no alert.
+    private static let alertableAge: TimeInterval = 150
 
-        var moments: [FantasyMoment] = []
-        var banked = false
-        for entry in matchup.allPlayers {
-            guard let delta = deltas[entry.player.id] else { continue }
-            // Bench points are banked for nobody: they neither alert nor chip.
-            guard entry.player.isStarter else { continue }
-
-            let play = playFor(player: entry.player)
-            // Bank the points against the play so the field map can show what that
-            // play was worth, now and for the rest of the game.
-            if let play {
-                var forPlay = pointsByPlay[play.id] ?? [:]
-                forPlay[entry.player.id] = (forPlay[entry.player.id] ?? 0) + delta
-                pointsByPlay[play.id] = forPlay
-                banked = true
-            }
-            moments.append(FantasyMoment(
-                player: entry.player,
-                isMine: entry.isMine,
-                delta: delta,
-                playText: play?.text,
-                // A big jump with no identifiable play is still almost certainly a
-                // score — a defensive or special teams touchdown, typically. Otherwise
-                // only a touchdown counts: a field goal is a scoring play too, and a
-                // kicker's extra point is written into the touchdown's play text.
-                isTouchdown: play.map {
-                    $0.scoreKind == .touchdown && entry.player.position != .kicker
-                } ?? (delta >= 6)
-            ))
-        }
-        if banked { PlayPointsStore.save(pointsByPlay) }
-        return moments
+    private func feedUpdated(gameID: String, detail: GameDetail) {
+        guard !allMatchups.isEmpty else { return }
+        score(gameID: gameID, detail: detail, now: .now)
+        rebuildCredits()
     }
 
-    private func playFor(player: RosterPlayer) -> Play? {
-        guard let games, let proTeamID = player.proTeamID else { return nil }
-        let team = String(proTeamID)
-        guard let game = games.games.first(where: { $0.home.id == team || $0.away.id == team }),
-              let detail = games.detail(id: game.id)
-        else { return nil }
-        return PlayAttribution.mostRecentPlay(naming: player, in: detail)
-    }
-
-    /// Recomputes which plays name which rostered players, for the field map chips.
-    ///
-    /// Only plays with banked points produce a chip. Naming alone is not interesting —
-    /// the quarterback is named on every dropback, which would put a chip on almost
-    /// every row and drown out the plays that actually scored.
-    ///
-    /// The corollary is that plays which happened before the widget started have no
-    /// chip: ESPN reports running totals, not per-play points, so there is nothing to
-    /// back-fill from.
-    private func rebuildCredits() {
+    /// Scores every game whose feed is in hand, and forgets games gone from the slate.
+    private func scoreAllGames() {
         guard let games else { return }
-        var result: [String: [PlayAttribution.Credit]] = [:]
-
-        // Starters only, pooled across leagues and deduplicated by player. A bench
-        // player scores nothing for either side, and benching a quarterback — who is
-        // named in every single dropback — would put a chip on most of the drive.
-        var pooled: [Int: (player: RosterPlayer, isMine: Bool)] = [:]
-        for (_, matchup) in allMatchups {
-            for entry in matchup.allPlayers where entry.player.isStarter {
-                if let existing = pooled[entry.player.id] {
-                    if entry.isMine && !existing.isMine { pooled[entry.player.id] = entry }
-                } else {
-                    pooled[entry.player.id] = entry
-                }
-            }
-        }
-        let everyone = Array(pooled.values)
-
+        let now = Date.now
         for game in games.games {
             guard let detail = games.detail(id: game.id) else { continue }
-            let teamIDs = [game.home.id, game.away.id]
-            let candidates = everyone.filter { entry in
-                guard let proTeamID = entry.player.proTeamID else { return false }
-                return teamIDs.contains(String(proTeamID))
-            }
-            guard !candidates.isEmpty else { continue }
+            score(gameID: game.id, detail: detail, now: now)
+        }
+        let onSlate = Set(games.games.map(\.id))
+        ledger.retainGames(onSlate)
+        summaries = summaries.filter { onSlate.contains($0.key) }
+        scored = scored.filter { onSlate.contains($0.key) }
+        judged = judged.filter { onSlate.contains($0.key) }
+        awaitingRuling = awaitingRuling.filter { onSlate.contains($0.key) }
+        rebuildCredits()
+    }
 
-            for drive in detail.drives {
-                for play in drive.plays where play.kind != .administrative {
-                    guard let banked = pointsByPlay[play.id], !banked.isEmpty else { continue }
-                    // Points banked against an incompletion were pinned there by mistake
-                    // (an older build did that); a chip on one would be wrong.
-                    guard PlayAttribution.canScore(playText: play.text) else { continue }
-                    let credits = PlayAttribution.credits(
-                        forPlayText: play.text,
-                        candidates: candidates,
-                        deltas: banked
-                    )
-                    .filter { $0.points != nil }
-                    if !credits.isEmpty { result[play.id] = credits }
+    /// Scores one game's plays for every starter in it, in every league, and sends the
+    /// plays new enough to be news to the alert engine.
+    ///
+    /// Plays that were already in the feed the first time it arrived happened before
+    /// anyone was watching: they get chips, back-filled for the whole game, but never
+    /// an alert. A play under review waits for the ruling.
+    private func score(gameID: String, detail: GameDetail, now: Date) {
+        guard let games, let game = games.game(id: gameID) else { return }
+        let teams = Set([game.home.id, game.away.id])
+        let leagues = allMatchups.map { entry in
+            (entry.leagueID, entry.matchup, entry.matchup.allPlayers.filter { candidate in
+                candidate.player.isStarter
+                    && candidate.player.proTeamID.map { teams.contains(String($0)) } == true
+            })
+        }
+        guard leagues.contains(where: { !$0.2.isEmpty }) else {
+            for (leagueID, _, _) in leagues { ledger.replace(game: gameID, league: leagueID, with: [:]) }
+            return
+        }
+
+        var feed: ScoredFeed
+        if let cached = scored[gameID], cached.detail == detail {
+            feed = cached
+        } else {
+            var cache = summaries[gameID] ?? [:]
+            let scorer = FantasyGameScorer(detail: detail, game: game) { play in
+                if let known = cache[play.id], known.text == play.text { return known.summary }
+                let summary = PlaySummary.parse(play.text)
+                cache[play.id] = (play.text, summary)
+                return summary
+            }
+            summaries[gameID] = cache
+            feed = ScoredFeed(detail: detail, scorer: scorer)
+        }
+        defer { scored[gameID] = feed }
+
+        var judgedHere = judged[gameID] ?? []
+        var heldHere = awaitingRuling[gameID] ?? [:]
+        for (leagueID, matchup, players) in leagues {
+            var plays: [String: [Int: Double]] = [:]
+            var moments: [FantasyMoment] = []
+            for entry in players {
+                var gameTotal = 0.0
+                defer {
+                    computedTotals[leagueID, default: [:]][entry.player.id] = (gameTotal * 100).rounded() / 100
+                }
+                let lines = feed.lines[entry.player.id] ?? feed.scorer.lines(for: entry.player)
+                feed.lines[entry.player.id] = lines
+                for line in lines {
+                    let points = matchup.scoringRules.points(for: line.stats, position: entry.player.position)
+                    gameTotal += points
+                    if points != 0 { plays[line.play.id, default: [:]][entry.player.id] = points }
+
+                    let key = "\(leagueID)|\(entry.player.id)|\(line.play.id)"
+                    if line.isUnderReview {
+                        heldHere[key] = now
+                        continue
+                    }
+                    guard judgedHere.insert(key).inserted else { continue }
+                    let reviewed = heldHere.removeValue(forKey: key)
+                    guard points > 0,
+                          isNews(line.play.id, gameID: gameID, reviewedAt: reviewed, now: now)
+                    else { continue }
+
+                    // ESPN's total for him trails the feed; what the plays add up to so far
+                    // is the better figure until it catches up. Not for a team defense: its
+                    // points-allowed and yards-allowed tiers belong to no play, so its plays
+                    // never add up to its total (checked live: off by −6 to +1).
+                    var player = entry.player
+                    if player.position != .defense {
+                        player.points = max(player.points, (gameTotal * 100).rounded() / 100)
+                    }
+                    moments.append(FantasyMoment(
+                        player: player, isMine: entry.isMine, delta: points,
+                        playText: line.play.text, isTouchdown: line.stats.isTouchdown,
+                        playID: line.play.id, pointsOnPlay: points
+                    ))
                 }
             }
+            ledger.replace(game: gameID, league: leagueID, with: plays)
+
+            guard !moments.isEmpty else { continue }
+            let settings = preferences.fantasyAlertSettings
+            // Only worth naming the league when there is more than one.
+            let leagueName = leagueIDs.count > 1 ? matchup.leagueName : nil
+            Task { [alerts, moments] in
+                await alerts.processFantasy(moments: moments, matchup: matchup, settings: settings,
+                                            leagueName: leagueName, leagueID: leagueID)
+            }
         }
-        creditsByPlay = result
+        judged[gameID] = judgedHere
+        awaitingRuling[gameID] = heldHere
+    }
+
+    /// Whether a play is new enough to interrupt for. `reviewedAt` is when it was last
+    /// seen under review: the ruling is the news, however long the review took.
+    private func isNews(_ playID: String, gameID: String, reviewedAt: Date?, now: Date) -> Bool {
+        guard let seen = games?.firstSeen(playID: playID, inGame: gameID), seen != .distantPast
+        else { return false }
+        let since = reviewedAt.map { max($0, seen) } ?? seen
+        return now.timeIntervalSince(since) <= Self.alertableAge
+    }
+
+    /// Turns the ledger into the chips the field map draws.
+    ///
+    /// Starters only, pooled across leagues and deduplicated by player. A bench player
+    /// scores nothing for either side. The league a player is pooled from — yours over an
+    /// opponent's — is the one his chip reads its points from. Each play's chips are
+    /// yours first, then the biggest, since a row only has room for two.
+    private func rebuildCredits() {
+        guard let games else { return }
+        var pooled: [Int: (player: RosterPlayer, isMine: Bool, leagueID: String)] = [:]
+        for (leagueID, matchup) in allMatchups {
+            for entry in matchup.allPlayers where entry.player.isStarter {
+                if let existing = pooled[entry.player.id], existing.isMine || !entry.isMine { continue }
+                pooled[entry.player.id] = (entry.player, entry.isMine, leagueID)
+            }
+        }
+
+        var gameByTeam: [String: String] = [:]
+        for game in games.games {
+            gameByTeam[game.home.id] = game.id
+            gameByTeam[game.away.id] = game.id
+        }
+
+        var result: [String: [PlayAttribution.Credit]] = [:]
+        for entry in pooled.values {
+            guard let team = entry.player.proTeamID, let gameID = gameByTeam[String(team)] else { continue }
+            for (playID, byPlayer) in ledger.plays(league: entry.leagueID, game: gameID) {
+                guard let points = byPlayer[entry.player.id], abs(points) >= 0.05 else { continue }
+                result[playID, default: []].append(PlayAttribution.Credit(
+                    playerID: entry.player.id, playerName: entry.player.fullName,
+                    isMine: entry.isMine, position: entry.player.position, points: points
+                ))
+            }
+        }
+        for (playID, credits) in result {
+            result[playID] = credits.sorted { lhs, rhs in
+                if lhs.isMine != rhs.isMine { return lhs.isMine }
+                let left = abs(lhs.points ?? 0), right = abs(rhs.points ?? 0)
+                return left != right ? left > right : lhs.playerID < rhs.playerID
+            }
+        }
+        if result != creditsByPlay { creditsByPlay = result }
+    }
+
+    private func forgetScoring() {
+        ledger = FantasyLedger()
+        summaries = [:]
+        scored = [:]
+        judged = [:]
+        awaitingRuling = [:]
+        computedTotals = [:]
+        disagreeingSince = [:]
+        accuracy = [:]
     }
 
     /// Forgets every league and the stored cookies.
@@ -431,11 +583,25 @@ final class FantasyStore {
         for id in leagueIDs { preferences.removeFantasyLeague(id) }
         matchups = [:]
         states = [:]
-        previousPoints = [:]
-        pointsByPlay = [:]
-        PlayPointsStore.clear()
+        forgetScoring()
         creditsByPlay = [:]
         winProbabilities = [:]
         games?.trackedGameIDs = []
     }
+}
+
+/// How one league's play-by-play points compare with ESPN's totals.
+struct FantasyAccuracy: Equatable {
+    struct Mismatch: Equatable, Identifiable {
+        var playerID: Int
+        var name: String
+        var ours: Double
+        var espn: Double
+        var id: Int { playerID }
+    }
+
+    /// Starters whose game has been scored, defenses aside.
+    var checked = 0
+    /// Those still off from ESPN after it has had time to catch up.
+    var mismatches: [Mismatch] = []
 }

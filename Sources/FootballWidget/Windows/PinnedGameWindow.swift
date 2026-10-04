@@ -5,16 +5,18 @@ import FootballCore
 /// Tears a game out of the panel into a small floating window that stays above other
 /// apps, so it can sit beside a stream while the menu bar panel is closed.
 @MainActor
-final class PinnedGameWindowController {
+final class PinnedGameWindowController: NSObject, NSWindowDelegate {
     static let shared = PinnedGameWindowController()
 
     private var windows: [String: NSPanel] = [:]
+    private weak var store: GameStore?
 
     func show(gameID: String, store: GameStore, fantasy: FantasyStore) {
         if let existing = windows[gameID] {
             existing.makeKeyAndOrderFront(nil)
             return
         }
+        self.store = store
 
         let content = PinnedGameView(gameID: gameID)
         .environment(store)
@@ -39,8 +41,11 @@ final class PinnedGameWindowController {
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
+        panel.delegate = self
         panel.contentView = ClickThroughHostingView(rootView: content)
-        // Autosaved per game, so a window you sized once comes back that way.
+        // One name shared by every pinned window, so a new one opens at the size you last
+        // left one. AppKit lets only one open window hold a name, so a second window
+        // pinned at the same time does not save its frame.
         panel.setFrameAutosaveName("pinned-game")
         // Small enough to tuck into a corner. The detail view drops down to a bare
         // scoreline at this size rather than squashing everything.
@@ -51,28 +56,29 @@ final class PinnedGameWindowController {
         panel.orderFrontRegardless()
 
         windows[gameID] = panel
-        store.focus = .detail(gameID: gameID)
+        store.setFocus(.detail(gameID: gameID), for: .pinned(gameID))
         Task { await store.refreshDetail(id: gameID) }
     }
 
+    /// The rest happens in `windowWillClose`, which the close button goes through too.
     func close(gameID: String) {
         windows[gameID]?.close()
-        windows[gameID] = nil
+    }
+
+    /// A closed panel is not released (`isReleasedWhenClosed` is off), and its hosting
+    /// view went with it: the game kept its focus, and the view its five-second refresh
+    /// loop, behind a window nobody could see. Dropping the content ends the loop.
+    func windowWillClose(_ notification: Notification) {
+        guard let panel = notification.object as? NSPanel,
+              let id = windows.first(where: { $0.value === panel })?.key
+        else { return }
+        windows[id] = nil
+        store?.setFocus(nil, for: .pinned(id))
+        panel.contentView = nil
     }
 
     var hasPinnedGames: Bool { !windows.isEmpty }
     var pinnedGameIDs: [String] { Array(windows.keys) }
-}
-
-/// A hosting view that answers clicks even though its window never becomes key.
-///
-/// The pinned window is a `.nonactivatingPanel`, which is what keeps it from stealing
-/// focus from whatever you are watching. The cost is that AppKit treats every click on
-/// it as a click on a non-key window and, by default, throws it away rather than
-/// delivering it — so the play rows could not be opened at all. Accepting first mouse
-/// is the opt-in that says "deliver it anyway".
-private final class ClickThroughHostingView<Content: View>: NSHostingView<Content> {
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
 /// Contents of a torn-off window.
@@ -98,6 +104,13 @@ private struct PinnedGameView: View {
             // rather than pulling the same feed twice.
             while !Task.isCancelled {
                 await store.refreshDetail(id: gameID)
+                // A finished game's feed has stopped moving, so after one fetch past the
+                // whistle it is neither polled here nor kept in focus. Same for a game
+                // gone from the slate.
+                guard let game = store.game(id: gameID), game.phase != .final else {
+                    store.setFocus(nil, for: .pinned(gameID))
+                    return
+                }
                 try? await Task.sleep(for: .seconds(5))
             }
         }

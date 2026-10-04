@@ -24,6 +24,33 @@ public struct FantasyStatusDTO: Decodable, Sendable {
 
 public struct FantasySettingsDTO: Decodable, Sendable {
     public var name: String?
+    /// Wrapped so a scoring block in a shape not seen before costs the league its
+    /// per-play points rather than the whole matchup.
+    public var scoringSettings: Failable<FantasyScoringSettingsDTO>?
+}
+
+/// The league's scoring table, from `view=mSettings`.
+public struct FantasyScoringSettingsDTO: Decodable, Sendable {
+    public var scoringItems: [Failable<FantasyScoringItemDTO>]?
+}
+
+/// One line of the scoring table: what one unit of an ESPN stat is worth.
+public struct FantasyScoringItemDTO: Decodable, Sendable {
+    public var statId: Int?
+    public var points: Double?
+    /// Lineup slot id (as a string, being a JSON key) → points, where the league scores
+    /// a stat differently for one position — a premium per catch for tight ends, say.
+    public var pointsOverrides: [String: Double]?
+
+    enum CodingKeys: String, CodingKey { case statId, points, pointsOverrides }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        statId = try? container.decodeIfPresent(Int.self, forKey: .statId)
+        points = try? container.decodeIfPresent(Double.self, forKey: .points)
+        // An override map that will not decode loses the overrides, not the item.
+        pointsOverrides = try? container.decodeIfPresent([String: Double].self, forKey: .pointsOverrides)
+    }
 }
 
 /// A human in the league. `id` is the SWID, braces and all.

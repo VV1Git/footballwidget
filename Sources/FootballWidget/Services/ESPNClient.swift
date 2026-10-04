@@ -49,7 +49,8 @@ actor ESPNClient {
     // MARK: - Requests
 
     func scoreboard() async throws -> Fetch<[Game]> {
-        let result: Fetch<ESPNScoreboardDTO> = try await get("\(Self.base)/scoreboard")
+        let thisWeek = "\(Self.base)/scoreboard"
+        let result: Fetch<ESPNScoreboardDTO> = try await get(thisWeek)
         guard case .updated(let dto) = result else { return .unchanged }
 
         let games = ESPNMapper.games(from: dto)
@@ -75,7 +76,12 @@ actor ESPNClient {
                 return .updated(nextGames.isEmpty ? games : nextGames)
             }
         } catch {
-            // A failed substitution costs the upcoming slate, never the one in hand.
+            // A failed substitution costs the upcoming slate, never the one in hand. Both
+            // bodies are forgotten so the next poll tries again: remembered, the default
+            // one came back "unchanged" on every poll after and the detour never re-ran,
+            // leaving last week's finals up until ESPN rolled the week on Wednesday.
+            fingerprints.forget(thisWeek)
+            fingerprints.forget(url)
             return .updated(games)
         }
     }

@@ -65,11 +65,14 @@ struct PanelRootView: View {
         .frame(width: Metrics.panelWidth, height: panelHeight)
         .onAppear {
             isShown = true
-            store.focus = selectedGameID.map { .detail(gameID: $0) } ?? .list
+            // A game left open before the week rolled over is gone from the slate. Its id
+            // would keep the poll at the open-game rate, fetching a feed nobody can see.
+            if selectedGame == nil { selectedGameID = nil }
+            store.setFocus(selectedGame.map { .detail(gameID: $0.id) } ?? .list, for: .panel)
         }
         .onDisappear {
             isShown = false
-            store.focus = .closed
+            store.setFocus(nil, for: .panel)
         }
     }
 
@@ -91,7 +94,8 @@ struct PanelRootView: View {
             if !preferences.isCollapsed(section.kind) {
                 let rows = CGFloat(section.games.count)
                 height += Metrics.rowSpacing
-                height += rows * Self.rowHeight + (rows - 1) * Metrics.rowSpacing
+                height += section.games.reduce(0) { $0 + rowHeight(for: $1) }
+                    + (rows - 1) * Metrics.rowSpacing
             }
             if index < sections.count - 1 { height += 10 }  // spacing between sections
         }
@@ -104,10 +108,19 @@ struct PanelRootView: View {
 
     /// One game row: two team lines plus the card's vertical padding.
     private static let rowHeight: CGFloat = 60
+    /// A live row stacks the clock, the down and the spot on the right, and with your
+    /// players in it the fantasy badge under them, which outgrows the two team lines.
+    /// Budgeting those at 60 cut the last card off behind the footer.
+    private static let liveRowWithBadgeHeight: CGFloat = 74
+
+    private func rowHeight(for game: Game) -> CGFloat {
+        game.isLive && fantasy.myPlayerCount(inGame: game) > 0
+            ? Self.liveRowWithBadgeHeight : Self.rowHeight
+    }
 
     private func select(_ id: String?) {
         withAnimation(.snappy(duration: 0.25)) { selectedGameID = id }
-        store.focus = id.map { .detail(gameID: $0) } ?? .list
+        store.setFocus(id.map { .detail(gameID: $0) } ?? .list, for: .panel)
         if let id { Task { await store.refreshDetail(id: id) } }
     }
 
@@ -162,6 +175,16 @@ struct PanelRootView: View {
             }
 
             Button {
+                RedZoneWindowController.shared.toggle()
+            } label: {
+                Image(systemName: "sportscourt")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(preferences.redZoneOpen ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
+            .help(redZoneHelp)
+
+            Button {
                 Task { await store.refresh() }
             } label: {
                 Image(systemName: "arrow.clockwise")
@@ -198,6 +221,15 @@ struct PanelRootView: View {
             .help("Quit Football")
         }
         .padding(.horizontal, Metrics.gutter)
+    }
+
+    /// RedZone only shows while a game is live, so turning it on at other times says when
+    /// it will appear rather than seeming to do nothing.
+    private var redZoneHelp: String {
+        if preferences.redZoneOpen {
+            return store.liveCount > 0 ? "Close RedZone" : "RedZone is on — it appears when a game kicks off"
+        }
+        return "RedZone — follow every live game in a corner window"
     }
 
     private var updatedText: String {

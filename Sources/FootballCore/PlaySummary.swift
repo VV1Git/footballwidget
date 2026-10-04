@@ -84,6 +84,14 @@ public struct PlaySummary: Sendable, Equatable {
     /// "Wide Left" on a missed kick.
     public var detail: String?
 
+    /// Who took part in a try written onto the end of the play: the kicker of the extra
+    /// point, or the passer, catcher or runner of a two-point conversion. A try posted on
+    /// its own fills `kicker`, `passer`, `receiver` and `rusher` instead.
+    public var tryKicker: String?
+    public var tryPasser: String?
+    public var tryReceiver: String?
+    public var tryRusher: String?
+
     public init(kind: Kind = .unknown) {
         self.kind = kind
     }
@@ -134,15 +142,18 @@ public struct PlaySummary: Sendable, Equatable {
             if main.trimmingCharacters(in: .whitespaces).isEmpty {
                 return standaloneTry(segment, result: play.tryResult)
             }
+            let conversion = standaloneTry(segment, result: play.tryResult)
+            play.tryKicker = conversion.kicker
+            play.tryPasser = conversion.passer
+            play.tryReceiver = conversion.receiver
+            play.tryRusher = conversion.rusher
         }
 
         // A safety enforced by penalty is written "…in End Zone, SAFETY - No Play." and
         // still scores; every other "No Play" means nothing on the snap counted.
         let isSafety = main.contains("SAFETY") && !main.contains("SAFETY NULLIFIED")
         if main.contains("NULLIFIED") || (main.contains("No Play") && !isSafety) {
-            play.kind = .noPlay
-            play.tryResult = nil
-            return play
+            return PlaySummary(kind: .noPlay)
         }
 
         classify(main, into: &play)
@@ -454,10 +465,19 @@ public struct PlaySummary: Sendable, Equatable {
         if let conversion = m[5] {
             if conversion.hasSuffix(" Kick") {
                 play.tryResult = .extraPointGood
+                play.tryKicker = String(conversion.dropLast(" Kick".count))
             } else if conversion.localizedCaseInsensitiveContains("PAT") {
                 play.tryResult = .extraPointMissed
             } else if conversion.hasSuffix("for Two-Point Conversion") {
                 play.tryResult = .twoPointGood
+                if let two = Rx.summaryTwoPoint.first(in: "(\(conversion))") {
+                    if let receiver = two[3] {
+                        play.tryPasser = two[1]
+                        play.tryReceiver = receiver
+                    } else {
+                        play.tryRusher = two[1]
+                    }
+                }
             } else if conversion.localizedCaseInsensitiveContains("Conversion Failed") {
                 play.tryResult = .twoPointFailed
             }

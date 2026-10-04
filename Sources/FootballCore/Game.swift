@@ -204,7 +204,10 @@ public struct PlayNode: Hashable, Sendable {
 
 /// What a scoring play put on the board.
 public enum ScoreKind: String, Sendable, Hashable {
-    case touchdown, fieldGoal, safety, other
+    case touchdown, fieldGoal, safety
+    /// A try posted as a play of its own, after the touchdown it belongs to.
+    case extraPoint, twoPointConversion
+    case other
 
     /// Short enough for the ladder's result column.
     public var label: String {
@@ -212,9 +215,14 @@ public enum ScoreKind: String, Sendable, Hashable {
         case .touchdown: return "TD"
         case .fieldGoal: return "FG"
         case .safety: return "Safety"
+        case .extraPoint: return "XP"
+        case .twoPointConversion: return "2-pt"
         case .other: return "Score"
         }
     }
+
+    /// The try after a touchdown rather than a score of its own.
+    public var isTry: Bool { self == .extraPoint || self == .twoPointConversion }
 }
 
 public struct Play: Identifiable, Hashable, Sendable {
@@ -307,6 +315,44 @@ public struct Drive: Identifiable, Hashable, Sendable {
         guard let outcome = outcome?.lowercased() else { return false }
         return outcome.contains("interception") || outcome.contains("fumble")
             || outcome.contains("downs")
+    }
+
+    /// The play that scored, if the drive ended in a score — leaving out a try posted on
+    /// its own after the touchdown.
+    public var scoringPlay: Play? {
+        plays.last { $0.isScoring && $0.scoreKind?.isTry != true }
+    }
+
+    /// The other side scored on this drive: a safety, or the ball taken back for a
+    /// touchdown — a pick-six, a fumble return, a punt returned all the way. Read from
+    /// the play, because ESPN's `isScore` is about the drive ending in points, not whose.
+    public var opponentScored: Bool {
+        guard let play = scoringPlay else { return false }
+        if play.scoreKind == .safety { return true }
+        if let offense = teamID, let finish = play.end.teamID { return finish != offense }
+        switch PlaySummary.parse(play.text).touchdown {
+        case .interceptionReturn?, .fumbleReturn?, .puntReturn?, .blockedKickReturn?,
+             .missedFieldGoalReturn?:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// This side put points on the board.
+    public var offenseScored: Bool {
+        scoringPlay != nil ? !opponentScored : isScore
+    }
+
+    /// Whether the other team has the ball once this drive is over: after a punt, a
+    /// turnover, a failed fourth down, a missed kick, or a safety (they get the free
+    /// kick). Not after a score by either side, which the scorer follows by kicking off,
+    /// and not when the half or the game ran out.
+    public var possessionChanges: Bool {
+        guard let outcome else { return false }
+        if outcome.lowercased().hasPrefix("end of") { return false }
+        if let play = scoringPlay { return play.scoreKind == .safety }
+        return !isScore
     }
 
     public init(

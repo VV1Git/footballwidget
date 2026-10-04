@@ -48,8 +48,27 @@ public enum FantasyMapper {
             mine: mine,
             opponent: opponent,
             espnWinProbability: mineSide?.winProbability,
-            outcome: matchup.flatMap { outcome(of: $0, myTeamID: myTeamID) }
+            outcome: matchup.flatMap { outcome(of: $0, myTeamID: myTeamID) },
+            scoringPeriod: scoringPeriod,
+            scoringRules: scoringRules(from: dto.settings?.scoringSettings?.value)
         )
+    }
+
+    /// The league's scoring table as stat id → points. An item without a stat id or a
+    /// value is dropped; a stat listed twice keeps its last line, as ESPN's own screens
+    /// show only one.
+    static func scoringRules(from dto: FantasyScoringSettingsDTO?) -> FantasyScoringRules {
+        var points: [Int: Double] = [:]
+        var overrides: [Int: [Int: Double]] = [:]
+        for item in (dto?.scoringItems ?? []).compacted() {
+            guard let stat = item.statId, let value = item.points else { continue }
+            points[stat] = value
+            let bySlot = (item.pointsOverrides ?? [:]).reduce(into: [Int: Double]()) { result, entry in
+                if let slot = Int(entry.key) { result[slot] = entry.value }
+            }
+            overrides[stat] = bySlot.isEmpty ? nil : bySlot
+        }
+        return FantasyScoringRules(points: points, overrides: overrides)
     }
 
     /// ESPN names the winning side as home or away, so it has to be turned round to

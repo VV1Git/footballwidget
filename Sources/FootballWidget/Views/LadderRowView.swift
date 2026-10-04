@@ -246,38 +246,10 @@ struct LadderRowView: View {
         .padding(.trailing, 2)
     }
 
-    private var downDistance: String {
-        if row.isDriveStart { return "Drive start" }
-        if row.flipsFrame { return turnoverLabel }
-        guard let text = row.play.downDistanceText, !text.isEmpty else { return row.play.typeText }
-        // "3rd & 4 at KC 45" → "3rd & 4"; the field map already shows the spot.
-        return text.components(separatedBy: " at ").first ?? text
-    }
+    /// Worked out in `LadderRow`, where the labels for every kind of play can be tested.
+    private var downDistance: String { row.situationLabel }
 
-    /// "Pass Interception Return" does not fit the column; say what happened instead.
-    private var turnoverLabel: String {
-        switch row.play.typeID {
-        case "26": return "Intercepted"
-        case "29": return "Fumble lost"
-        case "52": return "Punt"
-        case "36": return "Punt blocked"
-        case "60": return "FG missed"
-        default: break
-        }
-        if row.play.isTurnover { return "Turnover" }
-        // A play that hands the ball over without being a named turnover is almost
-        // always a failed fourth down. Saying "Pass Incompletion" hid that entirely.
-        // Kept short because the banner under the drive spells it out in full.
-        if (row.play.start.down ?? 0) == 4 { return "On downs" }
-        return "Lost ball"
-    }
-
-    private var yardageLabel: String {
-        if row.isDriveStart { return "" }
-        if row.play.isScoring { return row.play.scoreKind?.label ?? ScoreKind.other.label }
-        if row.flipsFrame { return "" }
-        return row.play.yardageLabel
-    }
+    private var yardageLabel: String { row.resultLabel }
 
     private var yardageColor: Color {
         if row.play.isScoring { return .orange }
@@ -295,7 +267,7 @@ struct LadderRowView: View {
         case "24", "3", "51": return "arrow.up.forward"    // Pass
         case "7": return "xmark.circle"                    // Sack
         case "52": return "arrow.up.to.line"               // Punt
-        case "59", "40": return "figure.kickboxing"        // Field goal
+        case "59", "60": return "figure.kickboxing"        // Field goal, good or missed
         case "67", "68": return "star"                     // Touchdown
         default: return "circle"
         }

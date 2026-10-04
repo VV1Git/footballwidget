@@ -124,21 +124,24 @@ struct FieldLadderView: View {
         .frame(height: Layout.driveEndHeight, alignment: .center)
     }
 
+    /// A pick-six or a safety ends the drive in points, but the other side's.
     private var endSymbol: String {
-        if drive.isScore { return "star.fill" }
-        if drive.endedInTurnover { return "arrow.uturn.left" }
+        if drive.offenseScored { return "star.fill" }
+        if drive.endedInTurnover || drive.opponentScored { return "arrow.uturn.left" }
         return "arrow.right.to.line"
     }
 
     private var endTint: Color {
-        if drive.isScore { return .orange }
-        if drive.endedInTurnover { return .red }
+        if drive.offenseScored { return .orange }
+        if drive.endedInTurnover || drive.opponentScored { return .red }
         return .secondary
     }
 
-    /// Who has the ball now, which is the part that was missing.
+    /// Who has the ball now, which is the part that was missing. Only when it changed
+    /// hands: a score is followed by a kickoff, and "END OF GAME · NE ball" was simply
+    /// wrong.
     private var handoffText: String? {
-        guard let defense, !drive.isScore else { return nil }
+        guard let defense, drive.possessionChanges else { return nil }
         return "· \(defense.abbreviation) ball"
     }
 

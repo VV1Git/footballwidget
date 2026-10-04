@@ -22,12 +22,19 @@ final class GameStore {
     /// a notification can quote the actual play even for a game you are not watching.
     var trackedGameIDs: Set<String> = []
 
-    /// Set by the UI so the poll rate can follow what is actually on screen.
-    var focus: RefreshPolicy.Focus = .closed {
-        didSet {
-            guard focus != oldValue else { return }
-            reschedule()
-        }
+    /// Told about every scoreboard poll — `true` when the slate changed, `false` when the
+    /// body came back identical. The RedZone feed listens, so it is warm before its window
+    /// is ever shown.
+    @ObservationIgnored var onScoreboard: (([Game], Bool) -> Void)?
+    /// Told whenever a game's play feed arrives with something new, for the fantasy layer
+    /// to score the new plays the moment they exist.
+    @ObservationIgnored var onFeedUpdate: ((String, GameDetail) -> Void)?
+
+    /// Who can have games on screen, each setting its own focus. One shared `focus`
+    /// let the last writer win: closing the panel set it to `.closed` under a pinned
+    /// window, and a closed pinned window left its game's focus on for good.
+    enum FocusOwner: Hashable {
+        case panel, redZone, pinned(String)
     }
 
     private let feed: GameFeed
@@ -38,6 +45,13 @@ final class GameStore {
     /// without cancelling a fetch that is already on the wire.
     @ObservationIgnored private var nap: Task<Void, Never>?
     @ObservationIgnored private var lastPoll: Date?
+    /// What each open view is showing. The poll runs at the fastest rate any of them
+    /// wants, and pulls the play feed of every game open in one.
+    @ObservationIgnored private var foci: [FocusOwner: RefreshPolicy.Focus] = [:]
+    /// Scoreboard polls failed in a row, and whether the last was ESPN refusing us
+    /// (403/429). See `RefreshPolicy.retryInterval`.
+    @ObservationIgnored private var scoreboardFailures = 0
+    @ObservationIgnored private var scoreboardThrottled = false
 
     /// One observable slot per game, rather than one dictionary of every game's feed.
     /// Writing `details[id]` notified every view that read the dictionary — for any
@@ -53,6 +67,13 @@ final class GameStore {
     /// every try, so asking again on each poll would only repeat the misses; the game is
     /// left to the ordinary poll until the scoreboard names a different play.
     @ObservationIgnored private var abandonedCatchUps: [String: String] = [:]
+    @ObservationIgnored private var lastTeamsAttempt: Date?
+    /// Game id → play id → when the play first appeared in that game's feed. Fantasy
+    /// points trail the feed, and this is how the fantasy layer tells a play still
+    /// waiting for its points from one whose points are long in. Plays already in a feed
+    /// the first time it arrives are dated `.distantPast`: they happened before anyone
+    /// was watching.
+    @ObservationIgnored private var playFirstSeen: [String: [String: Date]] = [:]
 
     init(feed: GameFeed, preferences: Preferences = .shared, alerts: AlertEngine = AlertEngine()) {
         self.feed = feed
@@ -78,8 +99,24 @@ final class GameStore {
 
     func game(id: String) -> Game? { games.first { $0.id == id } }
 
+    /// Set by each view so the poll rate can follow what is actually on screen. `nil`
+    /// means that view is gone.
+    func setFocus(_ focus: RefreshPolicy.Focus?, for owner: FocusOwner) {
+        let before = Set(foci.values)
+        foci[owner] = focus
+        if Set(foci.values) != before { reschedule() }
+    }
+
+    /// NFL banners hold off while RedZone is on screen, since it is already showing them.
+    var isRedZoneVisible: Bool { foci[.redZone] != nil }
+
     /// Reading this from a view observes that one game's feed and nothing else.
     func detail(id: String) -> GameDetail? { slot(for: id).detail }
+
+    /// When a play first showed up in its game's feed. See `playFirstSeen`.
+    func firstSeen(playID: String, inGame gameID: String) -> Date? {
+        playFirstSeen[gameID]?[playID]
+    }
 
     /// Created on first read, so a view that asks before the feed has arrived is
     /// already observing the slot the feed will land in.
@@ -98,6 +135,7 @@ final class GameStore {
             await self?.runLoop()
         }
         Task { await loadTeams() }
+        Task { await alerts.requestAuthorization() }
     }
 
     func stop() {
@@ -120,8 +158,7 @@ final class GameStore {
             // wait is worked out again against the new interval — polling at once if the
             // data is already older than the new view wants.
             while !Task.isCancelled {
-                let interval = RefreshPolicy.interval(games: games, focus: focus)
-                let wait = PollSchedule.delay(lastPoll: lastPoll, interval: interval.timeInterval)
+                let wait = PollSchedule.delay(lastPoll: lastPoll, interval: pollInterval().timeInterval)
                 guard wait > 0 else { break }
                 let sleeper = Task<Void, Never> { try? await Task.sleep(for: .seconds(wait)) }
                 nap = sleeper
@@ -129,6 +166,14 @@ final class GameStore {
                 nap = nil
             }
         }
+    }
+
+    private func pollInterval() -> Duration {
+        RefreshPolicy.retryInterval(
+            normal: RefreshPolicy.interval(games: games, foci: Array(foci.values)),
+            failures: scoreboardFailures,
+            throttled: scoreboardThrottled
+        )
     }
 
     /// A focus change used to cancel the whole loop and start a new one. That cancelled
@@ -155,15 +200,32 @@ final class GameStore {
                 games = fresh
                 liveCount = fresh.reduce(0) { $0 + ($1.isLive ? 1 : 0) }
                 lastUpdated = .now
-                await alerts.process(previous: previous, current: fresh, preferences: preferences)
+                // Per-game state follows the slate, so a launch-at-login app does not carry
+                // every feed of the season around.
+                let ids = Set(fresh.map(\.id))
+                playFirstSeen = playFirstSeen.filter { ids.contains($0.key) }
+                detailSlots = detailSlots.filter { ids.contains($0.key) }
+                abandonedCatchUps = abandonedCatchUps.filter { ids.contains($0.key) }
+                onScoreboard?(fresh, true)
+                await alerts.process(
+                    previous: previous, current: fresh, preferences: preferences,
+                    muted: isRedZoneVisible
+                )
             } else {
                 lastUpdated = .now
+                onScoreboard?(games, false)
+                await alerts.scoreboardUnchanged()
             }
             errorMessage = nil
+            retryTeamsIfNeeded()
+            scoreboardFailures = 0
+            scoreboardThrottled = false
         } catch let error where Self.isCancellation(error) {
             // Not a failure worth showing; the next poll runs as normal.
         } catch {
             errorMessage = error.localizedDescription
+            scoreboardFailures += 1
+            scoreboardThrottled = Self.isThrottled(error)
         }
 
         await refreshDetails(detailsDue())
@@ -172,11 +234,10 @@ final class GameStore {
 
     // MARK: - Play feed catch-up
 
-    /// The games whose play feed is a play short of the scoreboard, among those the
-    /// panel or the fantasy layer is actually using.
+    /// The games whose play feed is a play short of the scoreboard, among those a view
+    /// or the fantasy layer is actually using.
     private func laggingFeeds() -> [String] {
-        var ids = trackedGameIDs
-        if let focused = RefreshPolicy.shouldFetchDetail(for: focus) { ids.insert(focused) }
+        let ids = trackedGameIDs.union(RefreshPolicy.detailGameIDs(Array(foci.values)))
         return ids.sorted().filter { id in
             guard let game = game(id: id), game.isLive,
                   let latest = game.situation?.lastPlayID, !latest.isEmpty,
@@ -214,15 +275,14 @@ final class GameStore {
 
     /// The play feeds worth fetching this poll.
     ///
-    /// The game on screen is fetched every poll, as the refresh table promises. A game
+    /// Games on screen are fetched every poll, as the refresh table promises. A game
     /// that is only tracked for fantasy is fetched when the scoreboard shows a play its
     /// feed does not have yet — see `TrackedFeedPolicy`.
     private func detailsDue(now: Date = .now) -> [String] {
-        var due: [String] = []
-        let focused = RefreshPolicy.shouldFetchDetail(for: focus)
-        if let focused { due.append(focused) }
+        let focused = RefreshPolicy.detailGameIDs(Array(foci.values))
+        var due = focused.sorted()
 
-        for id in trackedGameIDs.sorted() where id != focused {
+        for id in trackedGameIDs.sorted() where !focused.contains(id) {
             // Only live games can have produced a new play since the last poll.
             guard let game = game(id: id), game.isLive else { continue }
             if TrackedFeedPolicy.shouldFetch(
@@ -257,6 +317,9 @@ final class GameStore {
     /// `retry` is a catch-up's follow-up fetch, which is deliberately soon after the one
     /// that missed, so it is not held to the freshness window. See `FetchGate.beginRetry`.
     func refreshDetail(id: String, retry: Bool = false) async {
+        // ESPN refusing the scoreboard refuses the play feeds too, and a pinned window
+        // asking every five seconds regardless would only prolong the block.
+        guard !scoreboardThrottled else { return }
         // Opening a game, the poll loop and a pinned window's loop all ask for feeds on
         // their own schedules; a fetch already running or just made is shared.
         guard retry ? detailGate.beginRetry(id) : detailGate.begin(id) else { return }
@@ -264,8 +327,11 @@ final class GameStore {
 
         do {
             if case .updated(let detail) = try await feed.summary(gameID: id) {
+                recordFirstSeen(detail, gameID: id)
+                let isNew = slot(for: id).detail != detail
                 // An equal feed does not notify, so only a new play redraws the ladder.
                 slot(for: id).detail = detail
+                if isNew { onFeedUpdate?(id, detail) }
             }
         } catch let error where Self.isCancellation(error) {
             return
@@ -276,8 +342,36 @@ final class GameStore {
         }
     }
 
+    private func recordFirstSeen(_ detail: GameDetail, gameID: String) {
+        let now = Date.now
+        let isFirstLook = playFirstSeen[gameID] == nil
+        var seen = playFirstSeen[gameID] ?? [:]
+        for drive in detail.drives {
+            for play in drive.plays where seen[play.id] == nil {
+                seen[play.id] = isFirstLook ? .distantPast : now
+            }
+        }
+        playFirstSeen[gameID] = seen
+    }
+
+    /// Fetched once at launch, which with launch at login is often before the network is
+    /// up — and a failure left the favourites picker on "Loading teams…" for good. Retried
+    /// after any successful poll while the list is still empty, at most every few minutes.
     private func loadTeams() async {
-        teams = (try? await feed.allTeams()) ?? []
+        lastTeamsAttempt = .now
+        let loaded = (try? await feed.allTeams()) ?? []
+        if !loaded.isEmpty { teams = loaded }
+    }
+
+    private func retryTeamsIfNeeded() {
+        guard teams.isEmpty else { return }
+        if let lastTeamsAttempt, Date.now.timeIntervalSince(lastTeamsAttempt) < 180 { return }
+        Task { await loadTeams() }
+    }
+
+    private static func isThrottled(_ error: Error) -> Bool {
+        guard case .status(let code)? = error as? ESPNClient.ClientError else { return false }
+        return code == 403 || code == 429
     }
 
     private static func isCancellation(_ error: Error) -> Bool {

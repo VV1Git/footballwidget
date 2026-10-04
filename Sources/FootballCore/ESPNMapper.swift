@@ -204,8 +204,16 @@ public enum ESPNMapper {
     /// "Blocked Field Goal" can be returned for a touchdown and a "Penalty" can be a
     /// safety. The text is only read when `scoringType` is missing, which happened once
     /// in 1,344 recorded scoring plays.
+    ///
+    /// A try posted as a play of its own is the exception: it belongs to the touchdown,
+    /// and with the touchdown's `scoringType` it drew a second "TD" on the drive.
     static func scoreKind(from dto: ESPNPlayDTO) -> ScoreKind? {
         guard dto.scoringPlay == true else { return nil }
+        switch PlaySummary.parse(dto.text ?? dto.shortText).kind {
+        case .extraPoint: return .extraPoint
+        case .twoPointConversion: return .twoPointConversion
+        default: break
+        }
         switch dto.scoringType?.abbreviation?.uppercased() {
         case "TD": return .touchdown
         case "FG": return .fieldGoal

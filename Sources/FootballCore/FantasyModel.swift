@@ -123,8 +123,9 @@ public struct RosterPlayer: Identifiable, Hashable, Sendable {
 
     /// How ESPN's play text writes this player: "J.Smith-Njigba".
     public var playFeedName: String {
-        guard let initial = firstName.first else { return lastName }
-        return "\(initial).\(lastName)"
+        let surname = PlayAttribution.baseSurname(lastName)
+        guard let initial = firstName.first else { return surname }
+        return "\(initial).\(surname)"
     }
 
     public var isStarter: Bool { slot.isStarter }
@@ -176,15 +177,24 @@ public struct FantasyMatchup: Sendable, Hashable {
     public var espnWinProbability: Double?
     /// Nil until ESPN declares a winner, which it does not do until the week settles.
     public var outcome: MatchupOutcome?
+    /// The scoring period the players' points are for. Usually the same number as
+    /// `week`, but a playoff matchup can span two.
+    public var scoringPeriod: Int?
+    /// What each stat is worth in this league, for scoring plays as they happen. Empty
+    /// when ESPN sent no scoring table, and then no play is worth anything.
+    public var scoringRules: FantasyScoringRules
 
     public init(leagueName: String, week: Int, mine: FantasyTeam, opponent: FantasyTeam?,
-                espnWinProbability: Double? = nil, outcome: MatchupOutcome? = nil) {
+                espnWinProbability: Double? = nil, outcome: MatchupOutcome? = nil,
+                scoringPeriod: Int? = nil, scoringRules: FantasyScoringRules = FantasyScoringRules()) {
         self.leagueName = leagueName
         self.week = week
         self.mine = mine
         self.opponent = opponent
         self.espnWinProbability = espnWinProbability
         self.outcome = outcome
+        self.scoringPeriod = scoringPeriod
+        self.scoringRules = scoringRules
     }
 
     public var margin: Double { mine.points - (opponent?.points ?? 0) }

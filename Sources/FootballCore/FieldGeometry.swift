@@ -19,6 +19,25 @@ public struct LadderRow: Identifiable, Hashable, Sendable {
     public var isNoGain: Bool { abs(endX - startX) < 0.0005 }
     public var isBackwards: Bool { endX < startX }
 
+    /// The label column: down and distance, or what happened when the ball changed
+    /// hands, since "4th & 7" says nothing about a punt.
+    public var situationLabel: String {
+        if isDriveStart { return "Drive start" }
+        if flipsFrame { return FieldGeometry.changeOfHandsLabel(for: play) }
+        if play.kind == .kickoff { return "Kick return" }
+        guard let text = play.downDistanceText, !text.isEmpty else { return play.typeText }
+        // "3rd & 4 at KC 45" → "3rd & 4"; the field map already shows the spot.
+        return text.components(separatedBy: " at ").first ?? text
+    }
+
+    /// The yardage column: the gain, or what a scoring play put on the board.
+    public var resultLabel: String {
+        if isDriveStart { return "" }
+        if play.isScoring { return (play.scoreKind ?? .other).label }
+        if flipsFrame { return "" }
+        return play.yardageLabel
+    }
+
     public init(id: String, play: Play, startX: Double, endX: Double,
                 number: Int? = nil, isDriveStart: Bool, flipsFrame: Bool) {
         self.id = id
@@ -49,23 +68,37 @@ public enum FieldGeometry {
     ]
 
     /// Measured from the *kicking* team's frame.
-    public static let kickoffTypeIDs: Set<String> = ["53"]
+    public static let kickoffTypeIDs: Set<String> = [
+        "53",  // Kickoff
+        "32",  // Kickoff Return Touchdown
+    ]
 
     /// Genuine turnovers — worth alerting on. A punt changes possession but is not
     /// one, so this is deliberately narrower than `changeOfPossessionTypeIDs`.
     public static let turnoverTypeIDs: Set<String> = [
         "26",  // Pass Interception Return
         "29",  // Fumble Recovery (Opponent)
-        "60",  // Missed Field Goal Return
+        "60",  // Field Goal Missed
     ]
 
-    /// Ball changes hands inside the play, so the end node flips frame.
+    /// Ball changes hands inside the play, so the end node flips frame. The recorded
+    /// game has 26 and 52; 18 and 39 are in recorded scoring plays; the rest are ESPN's
+    /// own numbering around them, which those agree with. 36 used to be filed here as a
+    /// blocked punt, and a pick-six was labelled "Punt blocked".
     public static let changeOfPossessionTypeIDs: Set<String> = [
         "52",  // Punt
         "26",  // Pass Interception Return
         "29",  // Fumble Recovery (Opponent)
-        "36",  // Blocked Punt
-        "60",  // Missed Field Goal Return
+        "17",  // Blocked Punt
+        "18",  // Blocked Field Goal
+        "34",  // Punt Return Touchdown
+        "36",  // Interception Return Touchdown
+        "37",  // Blocked Punt Touchdown
+        "38",  // Blocked Field Goal Touchdown
+        "39",  // Fumble Return Touchdown
+        "40",  // Missed Field Goal Return
+        "41",  // Missed Field Goal Return Touchdown
+        "60",  // Field Goal Missed
     ]
 
     // MARK: - Classification
@@ -128,6 +161,15 @@ public enum FieldGeometry {
                 // Only the end of a kickoff is meaningful in the offense's frame:
                 // it is where this drive actually starts.
                 guard let ex else { continue }
+                if play.isScoring {
+                    // Returned all the way, the kickoff is the whole drive, not a marker
+                    // at the end zone it finished in. It runs from where it was caught.
+                    let returned = PlaySummary.parse(play.text).returnYards
+                    let caught = returned.map { max(ex - Double($0) / 100, 0) } ?? sx ?? ex
+                    rows.append(LadderRow(id: play.id, play: play, startX: caught, endX: ex,
+                                          number: nil, isDriveStart: false, flipsFrame: false))
+                    continue
+                }
                 rows.append(LadderRow(id: play.id, play: play, startX: ex, endX: ex,
                                       number: nil, isDriveStart: true, flipsFrame: false))
                 continue
@@ -142,10 +184,74 @@ public enum FieldGeometry {
                 endX: ex,
                 number: snapNumber,
                 isDriveStart: false,
+                // Ending with the other team, not merely in another frame: a return in the
+                // returning side's own drive starts in the kicking team's frame and is
+                // still this side's ball.
                 flipsFrame: isFrameFlipped(start: play.start, end: play.end)
+                    && (offense == nil || play.end.teamID != offense)
             ))
         }
         return rows
+    }
+
+    // MARK: - Labels
+
+    /// What a play that handed the ball over was, in the dozen characters the ladder's
+    /// label column has.
+    ///
+    /// Read from the play text first and ESPN's play type second, because the type is
+    /// not always the whole story — an interception returned for a touchdown has a type
+    /// of its own, and a punt can be blocked. "On downs" is kept for an ordinary snap on
+    /// fourth down; a punt returned for a score on fourth down used to be called that.
+    public static func changeOfHandsLabel(for play: Play) -> String {
+        let summary = PlaySummary.parse(play.text)
+        switch summary.touchdown {
+        case .interceptionReturn?: return "Pick-six"
+        case .fumbleReturn?: return "Fumble return"
+        case .fumbleRecovery? where summary.takeaway != nil: return "Fumble return"
+        case .puntReturn?: return "Punt return"
+        case .kickoffReturn?: return "Kick return"
+        case .blockedKickReturn?: return "Blocked kick"
+        case .missedFieldGoalReturn?: return "FG returned"
+        default: break
+        }
+        let isBlockedPunt = summary.kind == .punt && play.text.contains("BLOCKED")
+        switch summary.takeaway {
+        case .interception?: return "Intercepted"
+        case .fumble?: return "Fumble lost"
+        case .muffedKick?: return "Muffed kick"
+        case .blockedKick?:
+            if isBlockedPunt { return "Punt blocked" }
+            return summary.kind == .fieldGoal(.blocked) ? "FG blocked" : "Kick blocked"
+        case nil: break
+        }
+        switch summary.kind {
+        case .interception: return "Intercepted"
+        case .punt: return isBlockedPunt ? "Punt blocked" : "Punt"
+        case .fieldGoal(.missed): return "FG missed"
+        case .fieldGoal(.blocked): return "FG blocked"
+        case .kickoff: return "Kickoff"
+        case .safety: return "Safety"
+        default: break
+        }
+        switch play.typeID {
+        case "26", "36": return "Intercepted"
+        case "29", "39": return "Fumble lost"
+        case "52": return "Punt"
+        case "34": return "Punt return"
+        case "17", "37": return "Punt blocked"
+        case "18", "38": return "FG blocked"
+        case "40", "41", "60": return "FG missed"
+        default: break
+        }
+        if play.isTurnover { return "Turnover" }
+        let isSnap: Bool
+        switch summary.kind {
+        case .pass, .incompletePass, .rush, .sack: isSnap = true
+        default: isSnap = ["3", "5", "7", "24"].contains(play.typeID ?? "")
+        }
+        if isSnap, play.start.down == 4 { return "On downs" }
+        return "Lost ball"
     }
 
     // MARK: - Field furniture
@@ -166,7 +272,7 @@ public enum FieldGeometry {
     /// without standing up any SwiftUI.
     public static func asciiLadder(for drive: Drive, width: Int = 48) -> String {
         var lines: [String] = []
-        lines.append("DRIVE: \(drive.teamAbbreviation)  \(drive.result)  (\(drive.yards) yds)")
+        lines.append("DRIVE: \(drive.teamAbbreviation)  \(drive.outcome ?? drive.result)  (\(drive.yards) yds)")
         lines.append("|" + String(repeating: "-", count: max(width - 2, 0)) + "|")
 
         for row in rows(for: drive) {
@@ -186,8 +292,8 @@ public enum FieldGeometry {
             if b > a { cells[b] = ">" } else if b < a { cells[b] = "<" } else { cells[a] = "x" }
 
             let label = row.flipsFrame
-                ? "TURNOVER"
-                : "\(row.play.typeText.prefix(16)) \(row.play.yardageLabel)"
+                ? row.situationLabel.uppercased()
+                : "\(row.play.typeText.prefix(16)) \(row.resultLabel)"
             let dd = (row.play.downDistanceText ?? "").prefix(16)
             lines.append(String(cells) + " | \(dd.padded(to: 16)) \(label)")
         }

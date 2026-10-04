@@ -39,9 +39,17 @@ a turnover return is drawn in the defending team's colour. Clicking a row expand
 full play description, or the button in the drive header opens all of them at once. The
 drive log underneath redraws the field for any earlier drive.
 
-A finished drive ends with a banner saying how it ended and who got the ball —
-`↩ TURNOVER ON DOWNS · SF ball`. Without it, a drive ending was signalled only by the
-next play changing colour, which says nothing about what happened.
+A finished drive ends with a banner saying how it ended and, when the ball changed
+hands, who got it — `↩ TURNOVER ON DOWNS · SF ball`. Without it, a drive ending was
+signalled only by the next play changing colour, which says nothing about what happened.
+A score is followed by a kickoff and the end of a half by nobody, so those banners name
+no one; a pick-six or a safety is shown as the other side's points, not a star.
+
+The label column says what a change of hands was — `Punt`, `Intercepted`, `Pick-six`,
+`Punt blocked`, `FG missed` — read from the play text first and ESPN's play type second.
+`On downs` is kept for an ordinary snap that came up short on fourth down. A try ESPN
+posts as a play of its own is labelled `XP` or `2-pt`, not as a second touchdown, and a
+kickoff returned all the way is drawn as the drive rather than a marker in the end zone.
 
 ### Reading ESPN's play feed
 
@@ -81,7 +89,8 @@ them, with the league named in the banner.
   are playing in it.
 - **In the play map** — when a play scores for someone in your matchup, the row is
   tinted and carries a chip: `J. Chase +12.4`, green for yours and orange for your
-  opponent's.
+  opponent's. Every play of the game gets its chips, including those from before the
+  app was opened.
 - **In game detail** — everyone from your matchup who is playing in that game.
 - **Menu bar** — can show `78.2 – 71.5` while nothing is being played. It is one of the
   choices under Settings › General › *When nothing is live*, alongside the kickoff
@@ -121,26 +130,52 @@ the SWID, so there is no team to pick from a list.
 
 ### How points get onto a play
 
-ESPN's NFL play feed carries no per-player breakdown — plays have `teamParticipants`
-but no `participants` array — so involvement is read out of the play text, which names
-players as `S.Darnold`, `J.Smith-Njigba` and so on. Candidates are narrowed to rostered
-players whose NFL team is in that game, so a surname competes against a handful of
-names rather than the whole league.
+Each play is scored on its own, from its text, with your league's own scoring table, the
+moment the play feed carries it. ESPN's fantasy API only reports running totals, and
+pinning each change in a total on a play meant waiting for totals that trail the feed,
+guessing which play a change belonged to, and getting it wrong when one change covered
+two plays.
 
-Points are never recomputed here; ESPN stays the source of truth. When a player's
-`appliedStatTotal` moves between polls, that change is banked against the most recent
-play naming them. Two things follow from that, and are worth knowing:
+The league request already asks for `view=mSettings`, which carries
+`settings.scoringSettings.scoringItems`: what one unit of each ESPN stat is worth, with
+per-position overrides (a tight-end premium is an override keyed by the TE lineup
+slot). `FantasyGameScorer` turns every play into a stat line per rostered player, keyed
+by the same stat ids, and the points are the stat line times the table.
 
-- **Plays from before the widget first saw them have no chip.** ESPN reports running
-  totals, not per-play points, so there is nothing to back-fill from. What has been
-  worked out is saved to disk and reloaded, so a restart does not wipe the chips off
-  a drive you are watching.
-- **Starters only.** A bench player scores nothing for either side, and benching a
-  quarterback — named in every dropback — would chip most of a drive.
-- **Ambiguity is dropped rather than guessed.** If two rostered players on the same
-  team share an initial and surname, neither is credited. Defensive and kicking points
-  often have no naming play, so they show in the matchup view and in notifications but
-  not on the field map.
+The stat ids were read off recorded data rather than taken from memory. A live Sunday
+was polled every fifteen seconds and each change in a player's ESPN stat line was lined
+up with the play that caused it and with ESPN's applied points per id: 3 is passing
+yards at 0.04, 24 and 42 rushing and receiving yards at 0.1, 25 and 43 touchdowns at 6,
+53 the catch that pays a point, 99 a defensive sack, 86 an extra point. Whole-game
+totals settle the rest that matter most: summing the per-play points over the recorded
+NE @ SEA feed gives exactly ESPN's week-one figures for Drake Maye (9.82, which pins 4 a
+passing touchdown and -2 an interception) and Jaxon Smith-Njigba (26.2), and the
+per-play stats add up to that game's box score for every player who touched the ball.
+Ids not yet exercised by recorded data — kick buckets past 50 yards, the milestone
+bonuses, defensive return touchdowns — follow the layout of the ones that were, and are
+marked as such in `FantasyStat`.
+
+- **By role, not by name.** The passer and the catcher, the runner, the kicker: a
+  tackler in brackets or a player named in a penalty is never credited. Names follow
+  play text's rules — it drops the `Jr.` and `III` rosters keep, and where one game's
+  text has both `B.Robinson` and `Bi.Robinson`, the longer form is Bijan's.
+- **Nothing is guessed.** A play wiped out by a flag scores nothing, a flag enforced
+  after the play leaves its yards alone, a play under review scores nothing until the
+  ruling replaces it, and a play with a lateral is skipped because the text cannot say
+  how the yards split.
+- **The try counts once.** ESPN can post the extra point as a play of its own while the
+  touchdown's text already ends with it.
+- **Game totals.** A point per 10 rushing yards, a 100-yard game: the play that crosses
+  the line takes it.
+- **Team defenses** are never named, so they score on what their side did — sacks,
+  picks, recoveries, blocked kicks, safeties, return touchdowns. Points-allowed and
+  yards-allowed tiers belong to the game, not to a play, and are left out.
+- **Chips for the whole game.** Because nothing depends on having watched the totals
+  move, a game opened mid-afternoon has chips back to its first play, and a relaunch
+  fills them back in as soon as the feeds load. Nothing is saved to disk.
+- **Starters only**, per league: a player rostered in two leagues is worth what each
+  league's table says. The matchup score, the players' totals and the win probability
+  are still ESPN's own.
 
 One more thing about `appliedStatTotal`: it is not scoped to a week. ESPN leaves the
 previous week's total sitting in it until the new week's first game kicks off, so
@@ -208,7 +243,8 @@ none. A few things the rules deliberately do:
 - **The extra point is not its own banner.** Live, the score moves +6 with the touchdown
   and +1 a poll later; the lone point is folded into the touchdown already announced.
 - **A pick-six is one banner**, `TD JAX · D. Lloyd 99-yd pick-six`, not a turnover and
-  a score.
+  a score — including when the score posts a poll before the play text, which used to
+  send a plain `TD JAX` and then the pick-six as well.
 - **Turnovers are read from the text as well as ESPN's flag**, which misses strip-sacks,
   muffed punts and kick-return fumbles, and counts missed field goals — those are called
   `ATL missed FG · N. Folk 45 yd` instead.
@@ -219,8 +255,14 @@ none. A few things the rules deliberately do:
 
 Fantasy alerts fire for starters on either side of your matchup — every touchdown, plus
 any play worth at least a configurable threshold (6 points by default), so a Sunday
-brings a handful of banners rather than hundreds. Downward stat corrections update
-totals but never interrupt. The body is the play from the player's side:
+brings a handful of banners rather than hundreds. Each player alerts at most once per
+play, per league, as soon as the play is in the feed, with what the play was worth in
+that league's scoring. Plays that were already in the feed when the app first saw it,
+and plays first seen more than a couple of minutes ago, get their chips but never
+interrupt; a play under review waits for the ruling. A touchdown worth less than a
+touchdown usually is (a league that gives nothing for throwing one) is held to the
+threshold. The subtitle is fitted to its line, dropping a long league name first.
+The body is the play from the player's side:
 
 ```
 Yours · Ja'Marr Chase +12.4
@@ -228,10 +270,36 @@ TD · 26.7 total · You 78.2 – 71.5
 14-yd catch from J. Burrow
 ```
 
-Alerts are derived from the scoreboard — score deltas, `lastPlay` and `isRedZone` —
+NFL alerts are derived from the scoreboard — score deltas, `lastPlay` and `isRedZone` —
 rather than from the play feed, so they work for every game on the slate rather than
-only the one on screen. A game is never alerted on the first time it is seen, so
-launching mid-afternoon does not replay the whole day.
+only the one on screen. A game is never alerted on the first time it is seen, or the
+first time after a gap of more than a couple of minutes in polling, so launching
+mid-afternoon or waking the Mac does not replay what was missed.
+
+## RedZone
+
+A small always-on-top window that follows every live game at once, like NFL RedZone. It
+features whichever game matters most right now — a team in the red zone, a fourth down
+in range, a one-score game late, a score that just landed, or your fantasy starters
+with the ball — with the field position, the last play and what it was worth to your
+lineup. Under it, the key moments from every game; under those, every live score.
+
+It folds into a one-line pill (`KC 17-14 BUF · 2&4 BUF 12 · Q4 2:11`) that snaps to
+whichever screen corner you drag it to. It only shows while football is being played,
+comes back on its own at the next kickoff, and remembers whether it was open, its size
+and its corner across launches. Turn it on from the court icon in the panel's footer.
+
+- **Switching is instant but not twitchy.** Another game has to outrank the featured
+  one by a clear margin (more while the featured game is inside the 20), so two drives
+  in the red zone do not trade places every poll; a game reaching the red zone or a
+  score elsewhere still takes over at once.
+- **It reads only the scoreboard.** No play-by-play requests; it just tightens the
+  scoreboard poll while it is up.
+- **NFL banners pause while it is on screen**, since it already shows every score and
+  turnover. Fantasy banners still come through.
+
+`FootballWidget --snapshot-redzone <directory>` renders the pill and the window
+offscreen from a made-up slate, without asking ESPN for anything.
 
 ## Refresh rate
 
@@ -241,10 +309,15 @@ Polling follows what is actually happening:
 |---|---|
 | No games today | 30 min |
 | Next kickoff more than 6 h off | 30 min |
-| Games today, none live | 5 min (60 s inside 10 min of kickoff) |
+| Games today, none live | 5 min (60 s inside 10 min of kickoff; 30 s once kickoff time passes) |
 | Live, panel closed | 20 s |
-| Live, panel open | 10 s |
+| Live, panel open, or RedZone as a pill | 10 s |
+| Live, RedZone expanded | 5 s (scoreboard only) |
 | A game's detail open or pinned | 5 s |
+| Scoreboard failing | 30 s, doubling to 5 min; 403/429 back off from 1 min to 10 min |
+
+Every window asks for its own rate and the fastest one wins, so closing the panel no
+longer drops a pinned game or RedZone back to the closed-panel rate.
 
 The six-hour row exists because the slate is not always today's. Once a week has been
 played out the panel is showing the next one (below), whose first kickoff can be two
@@ -254,10 +327,10 @@ Opening or closing the panel reschedules the next poll against the new interval 
 than forcing one, so a quick look does not cost a round of fetches.
 
 The play feed is the heavy request, around half a megabyte per game. The game on screen
-gets it at the rate above. A game that is only followed because someone in your fantasy
-matchup is playing in it gets it when the scoreboard reports a play that its feed does
-not have yet, and otherwise once a minute — the feed only needs the newest play for
-points to be pinned on it.
+gets it at the rate above. A game that is only followed because a starter in your
+fantasy matchup is playing in it gets it when the scoreboard reports a play that its
+feed does not have yet, and otherwise once a minute — the newest play is all that needs
+scoring.
 
 ESPN sends no `ETag` or `Last-Modified`, so a conditional request never comes back 304.
 Instead a body that is byte-for-byte the previous one for that URL — common, since the

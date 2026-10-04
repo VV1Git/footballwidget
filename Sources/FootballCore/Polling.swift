@@ -125,6 +125,11 @@ public struct BodyFingerprints: Sendable {
         seen[key] = fingerprint
     }
 
+    /// Makes the next body for `key` count as new, whatever it is.
+    public mutating func forget(_ key: String) {
+        seen[key] = nil
+    }
+
     /// Hashes every byte. `Data.hashValue` is no use here: it only looks at the first
     /// few dozen bytes, which are the same in every play feed.
     public static func fingerprint(_ data: Data) -> Int {

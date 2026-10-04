@@ -17,8 +17,14 @@ struct FantasyMatchupView: View {
 
             if let matchup = fantasy.matchup {
                 ScrollView {
-                    FantasyMatchupContent(matchup: matchup, winProbability: fantasy.winProbability)
-                        .padding(Metrics.gutter)
+                    VStack(spacing: 8) {
+                        FantasyMatchupContent(matchup: matchup, winProbability: fantasy.winProbability)
+                        if let report = fantasy.activeLeagueID.flatMap({ fantasy.accuracy[$0] }),
+                           report.checked > 0 {
+                            AccuracyLine(report: report)
+                        }
+                    }
+                    .padding(Metrics.gutter)
                 }
                 .scrollIndicators(.never)
             } else {
@@ -370,5 +376,32 @@ struct WinProbabilityBar: View {
         case .result:
             return "Every starter's game is over."
         }
+    }
+}
+
+/// Whether the points worked out from each play agree with ESPN's own totals. Quiet when
+/// they do; names each starter who is still off once ESPN has had time to catch up.
+private struct AccuracyLine: View {
+    let report: FantasyAccuracy
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if report.mismatches.isEmpty {
+                Label("Play-by-play points match ESPN for \(report.checked) starters",
+                      systemImage: "checkmark.seal")
+                    .foregroundStyle(.tertiary)
+            } else {
+                Label("\(report.mismatches.count) of \(report.checked) starters differ from ESPN",
+                      systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                ForEach(report.mismatches) { mismatch in
+                    Text("\(mismatch.name): plays \(String(format: "%.2f", mismatch.ours)) · ESPN \(String(format: "%.2f", mismatch.espn))")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+        }
+        .font(.system(size: 9))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
