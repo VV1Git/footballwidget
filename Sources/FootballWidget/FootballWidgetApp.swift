@@ -8,6 +8,7 @@ struct FootballWidgetApp: App {
     @State private var store: GameStore
     @State private var fantasy: FantasyStore
     @State private var redZone: RedZoneStore
+    @State private var odds: OddsStore
     @State private var preferences = Preferences.shared
     /// Keeps the icon visible briefly after launch so "hide when idle" can never
     /// strand the user with no way back into Settings.
@@ -40,6 +41,9 @@ struct FootballWidgetApp: App {
         _store = State(initialValue: games)
         _fantasy = State(initialValue: fantasy)
         _redZone = State(initialValue: redZone)
+        let odds = OddsStore()
+        odds.games = games
+        _odds = State(initialValue: odds)
     }
 
     var body: some Scene {
@@ -78,7 +82,8 @@ struct FootballWidgetApp: App {
                     store.start()
                     fantasy.start()
                     // Comes back if it was open at quit; shows itself once a game is live.
-                    RedZoneWindowController.shared.attach(store: store, redZone: redZone, fantasy: fantasy)
+                    RedZoneWindowController.shared.attach(store: store, redZone: redZone,
+                                                          fantasy: fantasy, odds: odds)
                     if PreviewWindowController.isRequested {
                         PreviewWindowController.show(store: store, fantasy: fantasy, preferences: preferences)
                     }

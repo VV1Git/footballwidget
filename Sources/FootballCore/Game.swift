@@ -65,6 +65,10 @@ public struct Situation: Hashable, Sendable {
     public var lastPlayTypeID: String?
     public var lastPlayWasScoring: Bool
     public var lastPlayWasTurnover: Bool
+    /// The scoreboard's newest play in full, as the play feed would map it. The feed
+    /// trails the scoreboard by up to half a minute, and this is what can be scored
+    /// in the meantime.
+    public var lastPlay: Play?
 
     public init(
         possessionTeamID: String? = nil, shortDownDistance: String? = nil,
@@ -73,7 +77,7 @@ public struct Situation: Hashable, Sendable {
         isRedZone: Bool = false, homeTimeouts: Int? = nil, awayTimeouts: Int? = nil,
         lastPlayText: String? = nil, lastPlayID: String? = nil,
         lastPlayTypeID: String? = nil, lastPlayWasScoring: Bool = false,
-        lastPlayWasTurnover: Bool = false
+        lastPlayWasTurnover: Bool = false, lastPlay: Play? = nil
     ) {
         self.possessionTeamID = possessionTeamID
         self.shortDownDistance = shortDownDistance
@@ -90,6 +94,7 @@ public struct Situation: Hashable, Sendable {
         self.lastPlayTypeID = lastPlayTypeID
         self.lastPlayWasScoring = lastPlayWasScoring
         self.lastPlayWasTurnover = lastPlayWasTurnover
+        self.lastPlay = lastPlay
     }
 }
 
@@ -382,13 +387,99 @@ public struct GameDetail: Sendable, Hashable {
     public var gameID: String
     public var drives: [Drive]
     public var scoringPlayIDs: [String]
+    /// Where the play feed says the game is. Nil when the feed did not say.
+    public var status: GameStatus?
 
-    public init(gameID: String, drives: [Drive], scoringPlayIDs: [String]) {
+    public init(gameID: String, drives: [Drive], scoringPlayIDs: [String], status: GameStatus? = nil) {
         self.gameID = gameID
         self.drives = drives
         self.scoringPlayIDs = scoringPlayIDs
+        self.status = status
     }
 
     /// Newest drive first — the live one if there is one.
     public var mostRecentDrive: Drive? { drives.first }
+}
+
+// MARK: - Status from the play feed
+
+/// A game's phase, clock and score as one source reports them.
+public struct GameStatus: Sendable, Hashable {
+    public var phase: GamePhase
+    public var period: Int
+    public var displayClock: String
+    public var statusDetail: String
+    public var homeScore: Int?
+    public var awayScore: Int?
+
+    public init(phase: GamePhase, period: Int, displayClock: String, statusDetail: String,
+                homeScore: Int? = nil, awayScore: Int? = nil) {
+        self.phase = phase
+        self.period = period
+        self.displayClock = displayClock
+        self.statusDetail = statusDetail
+        self.homeScore = homeScore
+        self.awayScore = awayScore
+    }
+
+    /// How far into the game this is, for telling which of two reports is newer:
+    /// halftime sits between the end of the second quarter and the start of the third.
+    public var progress: Double {
+        GameStatus.progress(phase: phase, period: period, clock: displayClock)
+    }
+
+    static func progress(phase: GamePhase, period: Int, clock: String) -> Double {
+        switch phase {
+        case .pre, .unknown: return -1
+        case .final: return .infinity
+        case .halftime: return 2.5 * 1000
+        case .live:
+            let remaining = AlertRules.seconds(clock) ?? 0
+            return Double(period) * 1000 + Double(max(0, 900 - remaining)) / 1000
+        }
+    }
+}
+
+public extension Game {
+    var status: GameStatus {
+        GameStatus(phase: phase, period: period, displayClock: displayClock,
+                    statusDetail: statusDetail, homeScore: home.score, awayScore: away.score)
+    }
+
+    /// This game with `feed`'s phase, clock and score, when the play feed is further into
+    /// the game than the scoreboard.
+    ///
+    /// ESPN's scoreboard can sit on "Halftime" for minutes after the second half has
+    /// kicked off — the play feed meanwhile carrying third-quarter plays and its own
+    /// header saying so. The scoreboard is still the default, since it is the one polled
+    /// for every game; the feed only ever moves a game forward.
+    func reconciled(with feed: GameStatus?) -> Game {
+        guard let feed, feed.progress > status.progress else { return self }
+        var game = self
+        game.phase = feed.phase
+        game.period = feed.period
+        game.displayClock = feed.displayClock
+        if !feed.statusDetail.isEmpty { game.statusDetail = feed.statusDetail }
+        if let score = feed.homeScore, score >= home.score { game.home.score = score }
+        if let score = feed.awayScore, score >= away.score { game.away.score = score }
+        return game
+    }
+
+    /// This game as live, when the scoreboard still says halftime but a snap has
+    /// happened since it first did. For games with no play feed to ask — RedZone
+    /// features games from the scoreboard alone.
+    ///
+    /// `halftimeLastPlay` is the scoreboard's last play when halftime was first seen.
+    func resumedAfterHalftime(halftimeLastPlay: String?) -> Game {
+        guard phase == .halftime, let halftimeLastPlay,
+              let situation, let latest = situation.lastPlayID, latest != halftimeLastPlay,
+              !FieldGeometry.administrativeTypeIDs.contains(situation.lastPlayTypeID ?? "")
+        else { return self }
+        var game = self
+        game.phase = .live
+        game.period = max(period, 3)
+        // The scoreboard's clock is the stale one; better none than "0:00".
+        game.displayClock = ""
+        return game
+    }
 }

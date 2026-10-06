@@ -100,3 +100,33 @@ private let seahawks = rostered(-16026, "Seahawks", "D/ST", .defense, team: 26)
     #expect(try points(seahawks, on: "D.Maye pass short middle intended for S.Diggs INTERCEPTED by D.Williams at NE 40. D.Williams for 40 yards, TOUCHDOWN. J.Myers extra point is GOOD, Center-C.Stoll, Holder-M.Dickson.",
                        touchdown: true) == 8)
 }
+
+/// The play in RedZone before the play feed had it (recorded live, ATL @ NO): scored
+/// straight off the scoreboard, Bijan's 9-yard run is worth 0.9.
+@Test func liveTableScoresTheScoreboardsLastPlay() throws {
+    let json = """
+    {"events": [{"id": "401872979", "shortName": "ATL @ NO", "competitions": [{
+      "status": {"period": 3, "displayClock": "6:27", "type": {"state": "in", "name": "STATUS_IN_PROGRESS"}},
+      "competitors": [
+        {"homeAway": "home", "score": "10", "team": {"id": "18", "abbreviation": "NO"}},
+        {"homeAway": "away", "score": "24", "team": {"id": "1", "abbreviation": "ATL"}}],
+      "situation": {"possession": "1", "down": 2, "distance": 1, "possessionText": "NO 38",
+        "lastPlay": {"id": "4018729791234", "type": {"id": "5"},
+          "text": "Bi.Robinson left guard to NO 38 for 9 yards (D.Stutsman).",
+          "statYardage": 9, "start": {"team": {"id": "1"}}, "end": {"team": {"id": "1"}}}}}]}]}
+    """
+    let board = try JSONDecoder().decode(ESPNScoreboardDTO.self, from: Data(json.utf8))
+    let game = try #require(ESPNMapper.games(from: board).first)
+    let play = try #require(game.situation?.lastPlay)
+    #expect(play.start.teamID == "1")
+
+    let bijan = rostered(4430807, "Bijan", "Robinson", .runningBack, team: 1)
+    let drive = Drive(id: "d", teamID: "1", teamAbbreviation: "ATL", result: "", isScore: false,
+                      yards: 0, playCount: 1, timeElapsed: "", summary: "", startText: nil,
+                      plays: [play], isCurrent: true)
+    let rules = try liveRules()
+    let points = FantasyGameScorer(detail: GameDetail(gameID: game.id, drives: [drive], scoringPlayIDs: []),
+                                   game: game).lines(for: bijan)
+        .reduce(0) { $0 + rules.points(for: $1.stats, position: .runningBack) }
+    #expect((points * 100).rounded() / 100 == 0.9)
+}

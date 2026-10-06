@@ -8,62 +8,109 @@ struct SpotlightCard: View {
     let game: Game
     /// The window's buttons, at the end of the score line — there is no separate title bar.
     var controls: RedZoneControls?
+    /// Told the score line's natural width, padding included, which the card takes as
+    /// its own.
+    var onLineWidth: ((CGFloat) -> Void)?
+
+    /// The natural widths of the score line's two halves, measured in place.
+    @State private var contentWidth: CGFloat = 0
+    @State private var controlsWidth: CGFloat = 0
 
     @Environment(FantasyStore.self) private var fantasy
     @Environment(RedZoneStore.self) private var redZone
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            scoreLine
-            situationLine
-            if showsField {
-                MiniFieldBar(game: game)
-                    .frame(height: 5)
-            }
-            // The whole play, wrapped: cut off after one line it lost the end — the
-            // yardage, "TOUCHDOWN" — which is the part worth reading.
-            if let lastPlay {
-                Text(lastPlay)
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(4)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if !chips.isEmpty {
-                HStack(spacing: 4) {
-                    ForEach(chips, id: \.playerID) { credit in
-                        CreditChip(credit: credit)
-                    }
-                    Spacer(minLength: 0)
+        // Two sections of glass; the card's container blends them into one surface.
+        // See `RedZoneSection`.
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
+                scoreLine
+                situationLine
+                if showsField {
+                    MiniFieldBar(game: game)
+                        .frame(height: 5)
                 }
             }
+            .padding(.horizontal, 6)
+            .padding(.top, 3)
+            .padding(.bottom, 2)
+            .modifier(RedZoneSection(edge: topEdge))
+
+            // The whole play, wrapped: cut off it lost the end — the yardage,
+            // "TOUCHDOWN" — which is the part worth reading.
+            if lastPlay != nil || !chips.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    if let lastPlay {
+                        Text(lastPlay)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !chips.isEmpty {
+                        HStack(spacing: 4) {
+                            ForEach(chips, id: \.playerID) { credit in
+                                CreditChip(credit: credit)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 4)
+                .modifier(RedZoneSection(edge: .middle))
+            }
         }
-        .padding(.horizontal, 6)
-        .padding(.top, 3)
-        .padding(.bottom, 4)
+    }
+
+    /// The top section rounds its upper corners; the card itself begins here.
+    private var topEdge: RedZoneSection.Edge { .top }
+
+    /// The line packed tight — the spacer at its minimum — plus the card's padding.
+    private func reportWidth() {
+        guard contentWidth > 0, controlsWidth > 0 else { return }
+        onLineWidth?(contentWidth + 3 + 6 + 3 + controlsWidth + 12)
+    }
+
+    /// Teams, score and clock: everything on the score line but the buttons.
+    @ViewBuilder
+    private var scoreLineContent: some View {
+        TeamMark(team: game.away)
+        Text("\(game.away.score)")
+            .font(.system(size: 12, weight: .bold, design: .rounded))
+            .monospacedDigit()
+            .fixedSize()
+        Text("–")
+            .font(.system(size: 11))
+            .foregroundStyle(.tertiary)
+        Text("\(game.home.score)")
+            .font(.system(size: 12, weight: .bold, design: .rounded))
+            .monospacedDigit()
+            .fixedSize()
+        TeamMark(team: game.home)
+        if game.isLive { LivePulse() }
+        Text(clockText)
+            .font(.system(size: 9, weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+            .fixedSize()
     }
 
     private var scoreLine: some View {
-        HStack(spacing: 4) {
-            TeamMark(team: game.away)
-            Text("\(game.away.score)")
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .monospacedDigit()
-            Text("–")
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
-            Text("\(game.home.score)")
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .monospacedDigit()
-            TeamMark(team: game.home)
-            if game.isLive { LivePulse() }
-            Text(clockText)
-                .font(.system(size: 9, weight: .semibold))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 4)
+        HStack(spacing: 3) {
+            HStack(spacing: 3) { scoreLineContent }
+                .fixedSize()
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
+                    contentWidth = $0
+                    reportWidth()
+                }
+            Spacer(minLength: 6)
             controls
+                .fixedSize()
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
+                    controlsWidth = $0
+                    reportWidth()
+                }
         }
         .frame(height: 16)
         .contentShape(Rectangle())
@@ -140,10 +187,12 @@ struct SpotlightCard: View {
         return RedZoneText.lastPlay(text)
     }
 
-    /// Points your lineup (or your opponent's) took from the last play.
+    /// Points your lineup (or your opponent's) took from the last play: from the play
+    /// feed once it has the play, and scored straight off the scoreboard until then.
     private var chips: [PlayAttribution.Credit] {
         guard let id = game.situation?.lastPlayID else { return [] }
-        return Array(fantasy.credits(forPlay: id).filter { $0.points != nil }.prefix(2))
+        let scored = fantasy.credits(forPlay: id).filter { $0.points != nil }
+        return Array((scored.isEmpty ? fantasy.provisionalCredits(for: game) : scored).prefix(2))
     }
 }
 
@@ -158,6 +207,7 @@ private struct TeamMark: View {
             Text(team.abbreviation)
                 .font(.system(size: 10, weight: .semibold))
         }
+        .fixedSize()
     }
 }
 

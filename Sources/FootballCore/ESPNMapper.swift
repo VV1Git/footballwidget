@@ -67,7 +67,8 @@ public enum ESPNMapper {
 
     static func phase(from status: ESPNStatusDTO?) -> GamePhase {
         let name = status?.type?.name ?? ""
-        if name == "STATUS_HALFTIME" { return .halftime }
+        // A halftime status with the third quarter already under way is a stale one.
+        if name == "STATUS_HALFTIME" { return (status?.period ?? 2) >= 3 ? .live : .halftime }
         switch status?.type?.state {
         case "pre": return .pre
         case "in": return .live
@@ -117,7 +118,8 @@ public enum ESPNMapper {
             // carry `isTurnover`, so fall back to the play type.
             lastPlayWasTurnover: dto.lastPlay?.isTurnover
                 ?? dto.lastPlay?.type?.id.map(FieldGeometry.turnoverTypeIDs.contains)
-                ?? false
+                ?? false,
+            lastPlay: dto.lastPlay.map { play(from: $0, sequence: 0) }
         )
     }
 
@@ -136,10 +138,25 @@ public enum ESPNMapper {
         var seen = Set<String>()
         drives = drives.filter { seen.insert($0.id).inserted }
 
+        let competition = dto.header?.competitions?.compacted().first
+        let status = competition?.status.map { status in
+            let competitors = competition?.competitors?.compacted() ?? []
+            func score(_ side: String) -> Int? {
+                competitors.first { $0.homeAway == side }?.score.flatMap { Int($0) }
+            }
+            return GameStatus(
+                phase: phase(from: status), period: status.period ?? 0,
+                displayClock: status.displayClock ?? "",
+                statusDetail: status.type?.shortDetail ?? status.type?.description ?? "",
+                homeScore: score("home"), awayScore: score("away")
+            )
+        }
+
         return GameDetail(
             gameID: gameID,
             drives: drives,
-            scoringPlayIDs: (dto.scoringPlays ?? []).compacted().compactMap(\.id)
+            scoringPlayIDs: (dto.scoringPlays ?? []).compacted().compactMap(\.id),
+            status: status
         )
     }
 

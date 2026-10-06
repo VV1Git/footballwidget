@@ -165,6 +165,18 @@ public struct ESPNSituationDTO: Decodable, Sendable {
 public struct ESPNSummaryDTO: Decodable, Sendable {
     public var drives: ESPNDrivesDTO?
     public var scoringPlays: [Failable<ESPNScoringPlayDTO>]?
+    /// The game's own status and score as the play feed has it — often ahead of the
+    /// scoreboard's. See `Game.reconciled(with:)`.
+    public var header: ESPNSummaryHeaderDTO?
+}
+
+public struct ESPNSummaryHeaderDTO: Decodable, Sendable {
+    public var competitions: [Failable<ESPNSummaryCompetitionDTO>]?
+}
+
+public struct ESPNSummaryCompetitionDTO: Decodable, Sendable {
+    public var status: ESPNStatusDTO?
+    public var competitors: [Failable<ESPNCompetitorDTO>]?
 }
 
 public struct ESPNDrivesDTO: Decodable, Sendable {

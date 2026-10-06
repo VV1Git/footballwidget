@@ -70,3 +70,58 @@ private func play(_ json: String) throws -> ESPNPlayDTO {
     let notScoring = try play(#"{"scoringPlay": false, "text": "field goal is GOOD"}"#)
     #expect(ESPNMapper.scoreKind(from: notScoring) == nil)
 }
+
+// MARK: - Status from the play feed
+
+private func halftimeGame(lastPlay: String = "half", typeID: String = "65") -> Game {
+    Game(id: "401872979", shortName: "ATL @ NO", phase: .halftime, statusDetail: "Halftime",
+         period: 2, displayClock: "0:00",
+         home: TeamSide(id: "18", abbreviation: "NO", displayName: "NO", shortName: "NO", score: 10),
+         away: TeamSide(id: "1", abbreviation: "ATL", displayName: "ATL", shortName: "ATL", score: 7),
+         situation: Situation(lastPlayID: lastPlay, lastPlayTypeID: typeID))
+}
+
+@Test func statusProgressOrdersHalftimeBetweenTheQuarters() {
+    let endOfSecond = GameStatus(phase: .live, period: 2, displayClock: "0:00", statusDetail: "")
+    let half = GameStatus(phase: .halftime, period: 2, displayClock: "0:00", statusDetail: "")
+    let thirdKickoff = GameStatus(phase: .live, period: 3, displayClock: "15:00", statusDetail: "")
+    let thirdLater = GameStatus(phase: .live, period: 3, displayClock: "7:38", statusDetail: "")
+    #expect(endOfSecond.progress < half.progress)
+    #expect(half.progress < thirdKickoff.progress)
+    #expect(thirdKickoff.progress < thirdLater.progress)
+}
+
+/// Recorded live: the scoreboard sat on "Halftime" while the play feed's header said
+/// 3rd quarter, 7:38 — and had the plays to prove it.
+@Test func aFeedAheadOfTheScoreboardMovesTheGameOn() {
+    let feed = GameStatus(phase: .live, period: 3, displayClock: "7:38", statusDetail: "7:38 - 3rd",
+                          homeScore: 13, awayScore: 7)
+    let game = halftimeGame().reconciled(with: feed)
+    #expect(game.phase == .live)
+    #expect(game.period == 3)
+    #expect(game.displayClock == "7:38")
+    #expect(game.home.score == 13)
+
+    // A feed behind the scoreboard changes nothing.
+    let stale = GameStatus(phase: .live, period: 2, displayClock: "1:10", statusDetail: "")
+    #expect(halftimeGame().reconciled(with: stale) == halftimeGame())
+}
+
+@Test func aSnapSinceHalftimeMeansTheSecondHalfHasStarted() {
+    #expect(halftimeGame().resumedAfterHalftime(halftimeLastPlay: "half").phase == .halftime)
+    let kicked = halftimeGame(lastPlay: "kickoff", typeID: "53").resumedAfterHalftime(halftimeLastPlay: "half")
+    #expect(kicked.phase == .live)
+    #expect(kicked.period == 3)
+    // A timeout is not a snap.
+    let timeout = halftimeGame(lastPlay: "to", typeID: "21").resumedAfterHalftime(halftimeLastPlay: "half")
+    #expect(timeout.phase == .halftime)
+}
+
+@Test func theRecordedFeedCarriesItsStatus() throws {
+    let located = Bundle.module.url(forResource: "summary", withExtension: "json", subdirectory: "Fixtures")
+    let url = try #require(located)
+    let dto = try JSONDecoder().decode(ESPNSummaryDTO.self, from: Data(contentsOf: url))
+    let status = try #require(ESPNMapper.detail(from: dto, gameID: "401872656").status)
+    #expect(status.phase == .final)
+    #expect(status.homeScore != nil && status.awayScore != nil)
+}

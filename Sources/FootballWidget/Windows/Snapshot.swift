@@ -215,8 +215,8 @@ extension Snapshot {
     /// a made-up Sunday slate. No network: the layout can be checked any day of the week
     /// without asking ESPN for anything.
     static func runRedZone(directory: String) async {
-        let before = sampleSlate(kcScore: 10, buffaloBall: false)
-        let after = sampleSlate(kcScore: 17, buffaloBall: true)
+        let before = sampleSlate(kcScore: 24, buffaloBall: false)
+        let after = sampleSlate(kcScore: 31, buffaloBall: true)
         let feed = StaticFeed(games: after)
         let gameStore = GameStore(feed: feed)
         await gameStore.refresh()
@@ -226,6 +226,7 @@ extension Snapshot {
         redZone.ingest(before, changed: true, now: now.addingTimeInterval(-20))
         redZone.ingest(after, changed: true, now: now)
         let fantasyStore = FantasyStore(alerts: AlertEngine())
+        let oddsStore = OddsStore.preview(["1": WinOdds(teamAbbreviation: "KC", probability: 0.92, source: "Kalshi")])
         let controller = RedZoneWindowController.shared
         var written: [String] = []
 
@@ -234,6 +235,7 @@ extension Snapshot {
             let expanded = RedZoneExpandedView(controller: controller)
                 .environment(gameStore)
                 .environment(redZone)
+                .environment(oddsStore)
                 .environment(fantasyStore)
                 .environment(Preferences.shared)
                 .environment(\.forcesOpaqueChrome, true)
@@ -272,10 +274,10 @@ extension Snapshot {
                      score: score, primaryHex: hex)
         }
         let kc = team("12", "KC", kcScore, "e31837")
-        let buf = team("2", "BUF", 14, "00338d")
+        let buf = team("2", "BUF", 10, "00338d")
         let featured = Game(
             id: "1", shortName: "KC @ BUF", kickoff: .now.addingTimeInterval(-10_000),
-            phase: .live, statusDetail: "", period: 4, displayClock: "2:11",
+            phase: .live, statusDetail: "", period: 4, displayClock: "13:28",
             home: buf, away: kc,
             situation: buffaloBall
                 ? Situation(possessionTeamID: "2", shortDownDistance: "1st & 10",

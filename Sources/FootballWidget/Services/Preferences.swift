@@ -66,6 +66,7 @@ final class Preferences {
         static let redZoneMini = "redZoneMini"
         static let redZoneCorner = "redZoneCorner"
         static let redZoneDisplayID = "redZoneDisplayID"
+        static let redZoneOddsHidden = "redZoneOddsHidden"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -96,6 +97,7 @@ final class Preferences {
         _redZoneMini = defaults.object(forKey: Key.redZoneMini) as? Bool ?? false
         _redZoneCorner = defaults.string(forKey: Key.redZoneCorner) ?? "bottomRight"
         _redZoneDisplayID = defaults.object(forKey: Key.redZoneDisplayID) as? Int ?? 0
+        _redZoneOddsHidden = defaults.object(forKey: Key.redZoneOddsHidden) as? Bool ?? false
     }
 
     // Backing storage is written through on every change so the app has no separate
@@ -242,6 +244,16 @@ final class Preferences {
         set { withMutation(keyPath: \.redZoneDisplayID) {
             _redZoneDisplayID = newValue
             defaults.set(newValue, forKey: Key.redZoneDisplayID)
+        } }
+    }
+
+    /// The RedZone odds blurred, for watching without knowing who the market favours.
+    private var _redZoneOddsHidden: Bool
+    var redZoneOddsHidden: Bool {
+        get { access(keyPath: \.redZoneOddsHidden); return _redZoneOddsHidden }
+        set { withMutation(keyPath: \.redZoneOddsHidden) {
+            _redZoneOddsHidden = newValue
+            defaults.set(newValue, forKey: Key.redZoneOddsHidden)
         } }
     }
 

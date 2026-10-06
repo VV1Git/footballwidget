@@ -1,0 +1,70 @@
+{
+ "events": [
+  {
+   "event_ticker": "KXNFLGAME-26OCT04DENSF",
+   "title": "DEN Broncos vs SF 49ers",
+   "markets": [
+    {
+     "ticker": "KXNFLGAME-26OCT04DENSF-SF",
+     "status": "active",
+     "yes_bid_dollars": "0.9900",
+     "yes_ask_dollars": "1.0000",
+     "last_price_dollars": "0.9900",
+     "yes_sub_title": "San Francisco"
+    },
+    {
+     "ticker": "KXNFLGAME-26OCT04DENSF-DEN",
+     "status": "active",
+     "yes_bid_dollars": "0.0000",
+     "yes_ask_dollars": "0.0100",
+     "last_price_dollars": "0.0100",
+     "yes_sub_title": "Denver"
+    }
+   ]
+  },
+  {
+   "event_ticker": "KXNFLGAME-26OCT04KCLV",
+   "title": "KC Chiefs vs LV Raiders",
+   "markets": [
+    {
+     "ticker": "KXNFLGAME-26OCT04KCLV-LV",
+     "status": "active",
+     "yes_bid_dollars": "0.1000",
+     "yes_ask_dollars": "0.1100",
+     "last_price_dollars": "0.1100",
+     "yes_sub_title": "Las Vegas"
+    },
+    {
+     "ticker": "KXNFLGAME-26OCT04KCLV-KC",
+     "status": "active",
+     "yes_bid_dollars": "0.8900",
+     "yes_ask_dollars": "0.9000",
+     "last_price_dollars": "0.8900",
+     "yes_sub_title": "Kansas City"
+    }
+   ]
+  },
+  {
+   "event_ticker": "KXNFLGAME-26OCT04LACSEA",
+   "title": "LA Chargers vs SEA Seahawks",
+   "markets": [
+    {
+     "ticker": "KXNFLGAME-26OCT04LACSEA-SEA",
+     "status": "active",
+     "yes_bid_dollars": "0.9600",
+     "yes_ask_dollars": "0.9700",
+     "last_price_dollars": "0.9700",
+     "yes_sub_title": "Seattle"
+    },
+    {
+     "ticker": "KXNFLGAME-26OCT04LACSEA-LAC",
+     "status": "active",
+     "yes_bid_dollars": "0.0200",
+     "yes_ask_dollars": "0.0300",
+     "last_price_dollars": "0.0300",
+     "yes_sub_title": "Los Angeles C"
+    }
+   ]
+  }
+ ]
+}

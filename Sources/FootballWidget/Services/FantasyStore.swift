@@ -38,6 +38,8 @@ final class FantasyStore {
     @ObservationIgnored private var computedTotals: [String: [Int: Double]] = [:]
     /// "league|player" → when his figure and ESPN's first disagreed.
     @ObservationIgnored private var disagreeingSince: [String: Date] = [:]
+    /// Scoreboard plays already scored for `provisionalCredits`, by play id and text.
+    @ObservationIgnored private var provisional: [String: [PlayAttribution.Credit]] = [:]
 
     private let client: FantasyClient
     private let preferences: Preferences
@@ -565,6 +567,53 @@ final class FantasyStore {
         if result != creditsByPlay { creditsByPlay = result }
     }
 
+    /// Points on the scoreboard's newest play in `game`, before the play feed has it.
+    ///
+    /// The feed trails the scoreboard by anything up to half a minute, so a run shown in
+    /// RedZone sat there without its chip until the feed caught up. The scoreboard's own
+    /// copy of the play is scored the same way, with each league's table; once the feed
+    /// has the play, its figure takes over. The two only differ on a cumulative bonus
+    /// (a 100-yard game) that needs the plays before it.
+    func provisionalCredits(for game: Game) -> [PlayAttribution.Credit] {
+        guard let play = game.situation?.lastPlay, !play.text.isEmpty,
+              play.kind != .administrative else { return [] }
+        let key = "\(play.id)|\(play.text)"
+        if let cached = provisional[key] { return cached }
+
+        let teams = Set([game.home.id, game.away.id])
+        let drive = Drive(id: "scoreboard", teamID: play.start.teamID, teamAbbreviation: "",
+                          result: "", isScore: false, yards: 0, playCount: 1, timeElapsed: "",
+                          summary: "", startText: nil, plays: [play], isCurrent: true)
+        let scorer = FantasyGameScorer(
+            detail: GameDetail(gameID: game.id, drives: [drive], scoringPlayIDs: []), game: game
+        )
+
+        // Pooled as the field map's chips are: once per player, yours first.
+        var credits: [Int: PlayAttribution.Credit] = [:]
+        for (_, matchup) in allMatchups {
+            for entry in matchup.allPlayers where entry.player.isStarter {
+                guard let team = entry.player.proTeamID, teams.contains(String(team)) else { continue }
+                if let existing = credits[entry.player.id], existing.isMine || !entry.isMine { continue }
+                let points = scorer.lines(for: entry.player).reduce(0) {
+                    $0 + matchup.scoringRules.points(for: $1.stats, position: entry.player.position)
+                }
+                let rounded = (points * 100).rounded() / 100
+                guard abs(rounded) >= 0.05 else { continue }
+                credits[entry.player.id] = PlayAttribution.Credit(
+                    playerID: entry.player.id, playerName: entry.player.fullName,
+                    isMine: entry.isMine, position: entry.player.position, points: rounded
+                )
+            }
+        }
+        let result = credits.values.sorted { lhs, rhs in
+            if lhs.isMine != rhs.isMine { return lhs.isMine }
+            return abs(lhs.points ?? 0) > abs(rhs.points ?? 0)
+        }
+        if provisional.count > 200 { provisional.removeAll() }
+        provisional[key] = result
+        return result
+    }
+
     private func forgetScoring() {
         ledger = FantasyLedger()
         summaries = [:]
@@ -574,6 +623,7 @@ final class FantasyStore {
         computedTotals = [:]
         disagreeingSince = [:]
         accuracy = [:]
+        provisional = [:]
     }
 
     /// Forgets every league and the stored cookies.

@@ -68,6 +68,9 @@ final class GameStore {
     /// left to the ordinary poll until the scoreboard names a different play.
     @ObservationIgnored private var abandonedCatchUps: [String: String] = [:]
     @ObservationIgnored private var lastTeamsAttempt: Date?
+    /// Game id → the scoreboard's last play when it first said halftime. A different
+    /// snap since then means the second half is under way, whatever the status says.
+    @ObservationIgnored private var halftimeLastPlay: [String: String] = [:]
     /// Game id → play id → when the play first appeared in that game's feed. Fantasy
     /// points trail the feed, and this is how the fantasy layer tells a play still
     /// waiting for its points from one whose points are long in. Plays already in a feed
@@ -193,7 +196,8 @@ final class GameStore {
         defer { isRefreshing = false }
 
         do {
-            if case .updated(let fresh) = try await feed.scoreboard() {
+            if case .updated(let scoreboard) = try await feed.scoreboard() {
+                let fresh = reconcile(scoreboard)
                 let previous = games
                 // Assigning an equal value does not notify observers, so an unchanged
                 // slate costs nothing here.
@@ -328,6 +332,13 @@ final class GameStore {
         do {
             if case .updated(let detail) = try await feed.summary(gameID: id) {
                 recordFirstSeen(detail, gameID: id)
+                // The feed's own status can be ahead of the scoreboard's; the header
+                // moves on now rather than at the next scoreboard poll.
+                let moved = games.map { $0.id == id ? $0.reconciled(with: detail.status) : $0 }
+                if moved != games {
+                    games = moved
+                    liveCount = moved.reduce(0) { $0 + ($1.isLive ? 1 : 0) }
+                }
                 let isNew = slot(for: id).detail != detail
                 // An equal feed does not notify, so only a new play redraws the ladder.
                 slot(for: id).detail = detail
@@ -340,6 +351,27 @@ final class GameStore {
             // score and clock in the header are still good.
             NSLog("[FootballWidget] detail fetch failed for \(id): \(error.localizedDescription)")
         }
+    }
+
+    /// The scoreboard's slate, brought up to date where the play feeds know better.
+    ///
+    /// ESPN's scoreboard can keep saying "Halftime" for minutes into the third quarter
+    /// while the play feed already carries its plays. A game with a feed in hand takes
+    /// the feed's status when it is further along; a game without one is taken as live
+    /// once a snap has happened since halftime began. Applied to every poll, so a stale
+    /// scoreboard cannot put "HALF" back.
+    private func reconcile(_ scoreboard: [Game]) -> [Game] {
+        var halftime: [String: String] = [:]
+        let games = scoreboard.map { game -> Game in
+            if game.phase == .halftime {
+                halftime[game.id] = halftimeLastPlay[game.id] ?? game.situation?.lastPlayID ?? ""
+            }
+            return game
+                .reconciled(with: detailSlots[game.id]?.detail?.status)
+                .resumedAfterHalftime(halftimeLastPlay: halftime[game.id])
+        }
+        halftimeLastPlay = halftime
+        return games
     }
 
     private func recordFirstSeen(_ detail: GameDetail, gameID: String) {

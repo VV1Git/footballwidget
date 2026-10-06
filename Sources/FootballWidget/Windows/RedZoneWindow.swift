@@ -16,6 +16,7 @@ final class RedZoneWindowController: NSObject, NSWindowDelegate {
     private weak var store: GameStore?
     private weak var redZone: RedZoneStore?
     private weak var fantasy: FantasyStore?
+    private weak var odds: OddsStore?
     private let preferences = Preferences.shared
     private var screenObserver: NSObjectProtocol?
     /// Where the window and the mouse were when a drag began. The window moves under the
@@ -25,10 +26,13 @@ final class RedZoneWindowController: NSObject, NSWindowDelegate {
     private var pillSize = CGSize(width: 240, height: RedZoneWindowController.pillHeight)
     /// The full view's height follows its content — a few moments early in the
     /// afternoon, eight once it is busy — so it never holds screen it is not using.
-    private var expandedHeight: CGFloat = 160
+    private var expandedSize = CGSize(width: RedZoneWindowController.expandedWidth, height: 160)
 
     static let pillHeight: CGFloat = 22
-    static let expandedWidth: CGFloat = 300
+    /// The narrowest the full view gets, so a wrapped play still reads in lines of a
+    /// sensible length. Otherwise it is as wide as its score line and no wider.
+    static let minimumExpandedWidth: CGFloat = 250
+    static let expandedWidth: CGFloat = 290
     /// The tallest the full view gets, with every moment row filled.
     static let expandedSize = CGSize(width: expandedWidth, height: 220)
 
@@ -36,10 +40,11 @@ final class RedZoneWindowController: NSObject, NSWindowDelegate {
 
     /// Starts following the slate. Called once at launch; shows the window as soon as
     /// it is open and a game is live.
-    func attach(store: GameStore, redZone: RedZoneStore, fantasy: FantasyStore) {
+    func attach(store: GameStore, redZone: RedZoneStore, fantasy: FantasyStore, odds: OddsStore) {
         self.store = store
         self.redZone = redZone
         self.fantasy = fantasy
+        self.odds = odds
         if screenObserver == nil {
             screenObserver = NotificationCenter.default.addObserver(
                 forName: NSApplication.didChangeScreenParametersNotification,
@@ -91,7 +96,7 @@ final class RedZoneWindowController: NSObject, NSWindowDelegate {
     }
 
     private func show() {
-        guard let store, let redZone, let fantasy else { return }
+        guard let store, let redZone, let fantasy, let odds else { return }
         if panel == nil {
             let panel = NSPanel(
                 contentRect: NSRect(origin: .zero, size: Self.expandedSize),
@@ -113,6 +118,7 @@ final class RedZoneWindowController: NSObject, NSWindowDelegate {
                 .environment(store)
                 .environment(fantasy)
                 .environment(redZone)
+                .environment(odds)
                 .environment(preferences)
             let hosting = ClickThroughHostingView(rootView: root)
             // The window's frame is set from the corner and the mode; SwiftUI must not
@@ -123,12 +129,14 @@ final class RedZoneWindowController: NSObject, NSWindowDelegate {
             place(animated: false)
         }
         panel?.orderFrontRegardless()
+        odds.start()
         updateFocus()
     }
 
     /// Dropped entirely rather than ordered out: a hidden hosting view still re-renders
     /// on every poll.
     private func hide() {
+        odds?.stop()
         guard let panel else {
             store?.setFocus(nil, for: .redZone)
             return
@@ -153,7 +161,7 @@ final class RedZoneWindowController: NSObject, NSWindowDelegate {
     }
 
     private var size: CGSize {
-        preferences.redZoneMini ? pillSize : CGSize(width: Self.expandedWidth, height: expandedHeight)
+        preferences.redZoneMini ? pillSize : expandedSize
     }
 
     /// The saved display if it is still attached, otherwise the main one.
@@ -178,11 +186,13 @@ final class RedZoneWindowController: NSObject, NSWindowDelegate {
         if preferences.redZoneMini { place(animated: false) }
     }
 
-    /// The full view reports its natural height; the window grows away from its corner.
-    func expandedDidResize(_ natural: CGFloat) {
-        let height = min(400, max(40, natural.rounded(.up)))
-        guard height != expandedHeight else { return }
-        expandedHeight = height
+    /// The full view reports its natural size; the window follows, growing away from its
+    /// corner.
+    func expandedDidResize(_ natural: CGSize) {
+        let next = CGSize(width: natural.width.rounded(.up),
+                          height: min(400, max(40, natural.height.rounded(.up))))
+        guard next != expandedSize else { return }
+        expandedSize = next
         if !preferences.redZoneMini { place(animated: true) }
     }
 
