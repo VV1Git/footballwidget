@@ -55,6 +55,52 @@ public struct PlaySummary: Sendable, Equatable {
         case extraPointGood, extraPointMissed, twoPointGood, twoPointFailed, defensiveTwoPoint
     }
 
+    /// A spot as play text names it: "HST 41" is 41 yards from Houston's goal line. With
+    /// no side it is midfield, or the goal line the offense is going for.
+    public struct Spot: Sendable, Equatable {
+        public var side: String?
+        public var yardLine: Int
+
+        public init(side: String?, yardLine: Int) {
+            self.side = side
+            self.yardLine = yardLine
+        }
+    }
+
+    /// One fumble: who had the ball and whether the other side came up with it.
+    public struct Fumble: Sendable, Equatable {
+        public var by: String?
+        public var lost: Bool
+        /// The ball had been taken away before it came loose — picked off, or a fumble
+        /// recovered by the other side — so it was theirs that was dropped. Taken away
+        /// twice is back where it started.
+        public var afterTakeaway: Bool
+        /// Where the loose ball was first touched or fallen on, or went out of bounds.
+        public var endedAt: Spot?
+        public var outOfBounds: Bool
+
+        public init(by: String?, lost: Bool, afterTakeaway: Bool = false,
+                    endedAt: Spot? = nil, outOfBounds: Bool = false) {
+            self.by = by
+            self.lost = lost
+            self.afterTakeaway = afterTakeaway
+            self.endedAt = endedAt
+            self.outOfBounds = outOfBounds
+        }
+    }
+
+    /// A flag enforced at a spot: "PENALTY on TEN-A.Schlottmann, Offensive Holding, 10
+    /// yards, enforced at HST 41". `team` is as play text abbreviates it.
+    public struct Foul: Sendable, Equatable {
+        public var team: String
+        public var enforcedAt: Spot
+
+        public init(team: String, enforcedAt: Spot) {
+            self.team = team
+            self.enforcedAt = enforcedAt
+        }
+    }
+
     public var kind: Kind
     /// Set only when the ball finished the play with the other team.
     public var takeaway: Takeaway?
@@ -70,6 +116,14 @@ public struct PlaySummary: Sendable, Equatable {
     public var rusher: String?
     public var kicker: String?
     public var fumbledBy: String?
+    /// Every fumble in the play, in order. `fumbledBy` names a lone loose ball only; a
+    /// fumble the other side ran back and fumbled again still cost the first man his.
+    /// A muffed kick is here only when the kicking team fell on it, which ESPN's box
+    /// score charges as a fumble lost; one the returner's side keeps is nothing.
+    public var fumbles: [Fumble] = []
+    /// Fouls enforced at a spot, in order. Declined ones and those enforced between
+    /// downs have no spot and are left out.
+    public var fouls: [Foul] = []
     public var forcedBy: String?
     /// The interceptor, or whoever recovered the loose ball for the other side.
     public var recoveredBy: String?
@@ -77,8 +131,12 @@ public struct PlaySummary: Sendable, Equatable {
     /// the scoreboard's abbreviation ("BLT" for BAL). See `scoreboardAbbreviation(_:)`.
     public var recoveringTeam: String?
 
-    /// Gain on a pass or run, distance of a field goal, length of a touchdown.
+    /// Gain on a pass or run, distance of a field goal, length of a touchdown run or
+    /// catch. A takeaway's runback is `returnYards`.
     public var yards: Int?
+    /// Where the gain on a pass or run was measured to: "to NO 12 for 7 yards" is the
+    /// NO 12, and a touchdown's is the goal line.
+    public var gainSpot: Spot?
     /// Distance an interception or recovery was run back.
     public var returnYards: Int?
     /// "Wide Left" on a missed kick.
@@ -152,7 +210,10 @@ public struct PlaySummary: Sendable, Equatable {
         // A safety enforced by penalty is written "…in End Zone, SAFETY - No Play." and
         // still scores; every other "No Play" means nothing on the snap counted.
         let isSafety = main.contains("SAFETY") && !main.contains("SAFETY NULLIFIED")
-        if main.contains("NULLIFIED") || (main.contains("No Play") && !isSafety) {
+        // A touchdown called back by a flag enforced at its spot is still a snap: the
+        // run or catch counts up to the flag. Only "No Play" wipes the whole thing out.
+        let calledBack = main.contains("TOUCHDOWN NULLIFIED") && !main.contains("No Play")
+        if (main.contains("NULLIFIED") && !calledBack) || (main.contains("No Play") && !isSafety) {
             return PlaySummary(kind: .noPlay)
         }
 
@@ -162,7 +223,11 @@ public struct PlaySummary: Sendable, Equatable {
             play.scorer = Rx.safetyCredit.first(in: main)?[1].map(display)
         }
         readTakeaway(main, into: &play)
-        if main.contains("TOUCHDOWN") { readTouchdown(main, into: &play) }
+        if main.contains("TOUCHDOWN"), !calledBack { readTouchdown(main, into: &play) }
+        play.fouls = Rx.foul.matches(in: main).compactMap { m in
+            guard let team = m[1], let spot = spot(side: m[2], yardLine: m[3]) else { return nil }
+            return Foul(team: team, enforcedAt: spot)
+        }
         return play
     }
 
@@ -204,11 +269,14 @@ public struct PlaySummary: Sendable, Equatable {
             play.kind = .pass
             play.passer = m[1].map(display)
             play.receiver = m[2].map(display)
-            play.yards = yards(in: main, after: m.range.upperBound)
-        } else if let m = Rx.rush.first(in: main) {
+            (play.yards, play.gainSpot) = gain(in: main, after: m.range.upperBound)
+        } else if let m = Rx.rush.first(in: main) ?? Rx.plainRun.first(in: main) {
+            // A run with no direction ("J.Jefferson to NO 49 for -8 yards") is still a
+            // carry, but only as the play's first words: after a recovery the same
+            // phrasing is the recoverer's advance.
             play.kind = .rush
             play.rusher = m[1].map(display)
-            play.yards = yards(in: main, after: m.range.upperBound)
+            (play.yards, play.gainSpot) = gain(in: main, after: m.range.upperBound)
         }
     }
 
@@ -234,6 +302,25 @@ public struct PlaySummary: Sendable, Equatable {
             if !fumbles.isEmpty {
                 play.forcedBy = Rx.forcedBy.first(in: main)?[1].map(display)
             }
+        }
+
+        // Each fumble on its own: lost if the other side recovered before the ball next
+        // came loose, and dropped by whoever had it after every change of hands so far.
+        for (i, loss) in losses.enumerated() {
+            let next = i + 1 < losses.count ? losses[i + 1].lowerBound : main.endIndex
+            let lost = recoveries.contains { (loss.upperBound..<next).contains($0.range.lowerBound) }
+            guard fumbles.contains(loss) || lost else { continue }
+            let takenAway = interceptions.filter { $0.range.lowerBound < loss.lowerBound }.count
+                + recoveries.filter { $0.range.lowerBound < loss.lowerBound }.count
+            let ended = Rx.looseBallEnd.first(in: main, from: loss.upperBound)
+                .flatMap { $0.range.lowerBound < next ? $0 : nil }
+            play.fumbles.append(Fumble(
+                by: carrier(before: loss.lowerBound, in: main),
+                lost: lost,
+                afterTakeaway: takenAway % 2 == 1,
+                endedAt: ended.flatMap { spot(side: $0[2], yardLine: $0[3]) },
+                outOfBounds: ended?[1] == "out of bounds at"
+            ))
         }
 
         guard (interceptions.count + recoveries.count) % 2 == 1 else {
@@ -296,8 +383,9 @@ public struct PlaySummary: Sendable, Equatable {
             play.returnYards = distance
             // Only name the returner if he is the one who took it away; a lateral after
             // the pick means somebody else scored, and the text is easy to misread.
+            // `yards` stays the catch or run before the ball changed hands: a receiver
+            // whose fumble was run back 87 yards gained 7, not 87.
             play.scorer = display(who) == play.recoveredBy ? play.recoveredBy : nil
-            play.yards = play.scorer == nil ? nil : distance
             return
         }
 
@@ -560,6 +648,19 @@ public struct PlaySummary: Sendable, Equatable {
         return m[1].flatMap { Int($0) } ?? 0
     }
 
+    /// The gain after `index` and the spot it was measured to.
+    private static func gain(in text: String, after index: String.Index) -> (Int?, Spot?) {
+        guard let m = Rx.gainAt.first(in: text, from: index) else { return (nil, nil) }
+        let yards = m[3].flatMap { Int($0) } ?? 0
+        if m[4] != nil { return (yards, Spot(side: nil, yardLine: 0)) }
+        return (yards, spot(side: m[1], yardLine: m[2]))
+    }
+
+    private static func spot(side: String?, yardLine: String?) -> Spot? {
+        guard let line = yardLine.flatMap({ Int($0) }) else { return nil }
+        return Spot(side: side, yardLine: line)
+    }
+
     /// The return distance, read only up to the next loose ball or flag so a penalty's
     /// yardage is never taken for the runback.
     private static func returnYards(in text: String, after index: String.Index) -> Int? {
@@ -619,7 +720,22 @@ private enum Rx {
     static let rush = Pattern(
         "\(N) (?:scrambles )?(?:up the middle|left end|right end|left tackle|right tackle|left guard|right guard|kneels)"
     )
+    /// A run with no direction, as the play's first words: "(Shotgun) J.Jefferson to NO
+    /// 49 for -8 yards".
+    static let plainRun = Pattern(
+        "^(?:\\([^)]*\\)\\s*)*(?:.*?reported in as eligible\\.\\s*)?\(N)(?= (?:to|pushed ob at|ran ob at) (?:[A-Z]{2,3} )?-?\\d+ for )"
+    )
     static let gain = Pattern("for (?:(-?\\d+) yards?|no gain)")
+    /// "HST 41", "50", "SEA -5" in the end zone.
+    static let spot = "(?:([A-Z]{2,3}) )?(-?\\d+)"
+    /// A gain with the spot it reached: "to NO 12 for 7 yards", or "for 15 yards,
+    /// TOUCHDOWN" at the goal line.
+    static let gainAt = Pattern("(?:(?:to|at) \(spot) )?for (?:(-?\\d+) yards?|no gain)(, TOUCHDOWN)?")
+    /// Where a loose ball first stopped being loose, or went out of bounds untouched.
+    static let looseBallEnd = Pattern(
+        "(touched at|(?:recovered|RECOVERED) by [A-Z]{2,3}-\(n) at|and recovers at|out of bounds at) \(spot)"
+    )
+    static let foul = Pattern("PENALTY on ([A-Z]{2,3})(?:-\(n))?, (?:(?!PENALTY).)*?enforced at \(spot)")
     static let passingTouchdown = Pattern("\(N) pass(?: [a-z]+)* to \(N) for \(distance), TOUCHDOWN")
     /// The name directly in front of `for N yards, TOUCHDOWN`, with any run direction.
     static let touchdownRunner = Pattern("\(N)((?: [a-z]+)*) for \(distance), TOUCHDOWN")

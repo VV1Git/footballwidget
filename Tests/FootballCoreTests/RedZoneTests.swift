@@ -401,6 +401,27 @@ private func stoppedGame(id: String, typeID: String, text: String) -> Game {
     #expect(team.reason == "MIN timeout")
 }
 
+/// Recorded live, MIN @ NO: third and 1 at the NO 10 when the third quarter ran out.
+/// The play feed's header already read "15:00 - 4th", which moved the game on to a
+/// fourth-quarter clock, but nothing had been snapped since "END QUARTER 3".
+@Test func redZoneTreatsTheEndOfAQuarterAsABreakWhateverTheClockSays() throws {
+    var game = stoppedGame(id: "1", typeID: "2", text: "END QUARTER 3")
+    game.period = 4
+    game.displayClock = "15:00"
+    game.situation?.possessionTeamID = "16"
+    game.situation?.possessionText = "NO 10"
+    game.situation?.down = 3
+    game.situation?.distance = 1
+    let ended = try #require(RedZoneRanker.rank(game, now: Date()))
+    #expect(!ended.inPlay)
+    #expect(ended.reason == "End of Q3")
+
+    let half = try #require(RedZoneRanker.rank(
+        stoppedGame(id: "2", typeID: "65", text: "END OF HALF"), now: Date()))
+    #expect(!half.inPlay)
+    #expect(half.reason == "Halftime")
+}
+
 /// A game in a timeout hands the spotlight to any game with the ball live, at once.
 @Test func redZoneLeavesAGameInATimeout() {
     let stopped = RankedGame(id: "1", score: 2, reason: "Official timeout", inPlay: false, inRedZone: false)

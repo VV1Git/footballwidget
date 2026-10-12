@@ -325,13 +325,152 @@ private let patriots = scoringPlayer(-16017, "Patriots", "D/ST", .defense, team:
 
 @Test func aFumbleLostCostsTheCarrier() {
     let walker = scoringPlayer(4567048, "Kenneth", "Walker III", .runningBack)
-    let lost = scoringSnap("f", "K.Walker left end to SEA 30 for 5 yards (C.Gonzalez). FUMBLES (C.Gonzalez), RECOVERED by NE-K.Byard at SEA 31.")
-    let kept = scoringSnap("k", "K.Walker up the middle to SEA 35 for 2 yards (K.Byard). FUMBLES (K.Byard), recovered by SEA-C.Kupp at SEA 34.")
+    let lost = scoringSnap("f", "K.Walker left end to SEA 30 for 5 yards (C.Gonzalez). FUMBLES (C.Gonzalez), RECOVERED by NE-K.Byard at SEA 30.")
+    let kept = scoringSnap("k", "K.Walker up the middle to SEA 35 for 2 yards (K.Byard). FUMBLES (K.Byard), recovered by SEA-C.Kupp at SEA 35.")
     #expect(points(walker, [lost, kept]) == [-1.5, 0.2])
     let fumbles = onlyLine(walker, [lost, kept]).map { $0.stats[FantasyStat.fumbles] }
     #expect(fumbles == [1, 1])
     // The defense that fell on it.
     #expect(points(patriots, [lost, kept]) == [2, 0])
+}
+
+/// Chase Brown, CIN @ MIA: caught for 3, fumbled, and Miami's returner fumbled too
+/// before Miami fell on it. Two loose balls once named nobody, so Brown kept the 2
+/// points ESPN took off him. The second fumble is Miami's, not his.
+@Test func aFumbleLostStillCostsTheCarrierWhenTheReturnerFumblesToo() {
+    let brown = scoringPlayer(4362238, "Chase", "Brown", .runningBack, team: 4)
+    let cinAtMia = Game(
+        id: "401872982", shortName: "CIN @ MIA", phase: .live, statusDetail: "",
+        period: 3, displayClock: "5:00",
+        home: TeamSide(id: "15", abbreviation: "MIA", displayName: "Miami Dolphins",
+                       shortName: "Dolphins", score: 0),
+        away: TeamSide(id: "4", abbreviation: "CIN", displayName: "Cincinnati Bengals",
+                       shortName: "Bengals", score: 0)
+    )
+    let play = scoringSnap("ff", "(Shotgun) J.Burrow pass short left to C.Brown to MIA 7 for 3 yards (C.Johnson). FUMBLES (C.Johnson), RECOVERED by MIA-C.Robinson at MIA 7. C.Robinson to MIA 18 for 11 yards (J.Chase). FUMBLES (J.Chase), recovered by MIA-J.Uche at MIA 23.", offense: "4")
+    let line = onlyLine(brown, [play], game: cinAtMia)[0].stats
+    #expect(line[FantasyStat.fumbles] == 1)
+    #expect(line[FantasyStat.fumblesLost] == 1)
+    #expect(recordedRules.points(for: line, position: .runningBack) == -0.7)
+}
+
+// MARK: - Yards the box score counts short
+
+private func matchup(away: (id: String, abbreviation: String), home: (id: String, abbreviation: String)) -> Game {
+    Game(id: "g", shortName: "\(away.abbreviation) @ \(home.abbreviation)", phase: .final,
+         statusDetail: "Final", period: 4, displayClock: "0:00",
+         home: TeamSide(id: home.id, abbreviation: home.abbreviation, displayName: home.abbreviation,
+                        shortName: home.abbreviation, score: 0),
+         away: TeamSide(id: away.id, abbreviation: away.abbreviation, displayName: away.abbreviation,
+                        shortName: away.abbreviation, score: 0))
+}
+
+private func statTotal(_ stat: Int, _ player: RosterPlayer, _ plays: [Play], game: Game) -> Double {
+    onlyLine(player, plays, game: game).reduce(0) { $0 + $1.stats[stat] }
+}
+
+/// Recorded live on 11 October, each figure ESPN's box score for the play: a fumble's
+/// yards run to where the loose ball was first touched or fallen on — whichever way it
+/// went if his side kept it, never past where he lost it if the other side did.
+@Test func aFumblesYardsStopWhereTheLooseBallDid() {
+    // NYG @ WSH: no gain to the WAS 24, Washington fell on it at the WAS 23. Box: 0.
+    let nygAtWsh = matchup(away: ("19", "NYG"), home: ("28", "WSH"))
+    let skattebo = scoringPlayer(4696981, "Cam", "Skattebo", .runningBack, team: 19)
+    let lostForward = scoringSnap("k", "(Shotgun) C.Skattebo up the middle to WAS 24 for no gain (D.Payne; S.Styles). FUMBLES (D.Payne), RECOVERED by WAS-S.Tuttle at WAS 23.", offense: "19")
+    #expect(statTotal(FantasyStat.rushingYards, skattebo, [lostForward], game: nygAtWsh) == 0)
+
+    // DEN @ LAC: to the LAC 36 for 19, touched 2 yards on, Denver's. Box: 19.
+    let denAtLac = matchup(away: ("7", "DEN"), home: ("24", "LAC"))
+    let kolar = scoringPlayer(4430807, "Charlie", "Kolar", .tightEnd, team: 24)
+    let touchedForward = scoringSnap("l", "(Shotgun) J.Herbert pass short middle to C.Kolar to LAC 36 for 19 yards (T.Hufanga). FUMBLES (T.Hufanga), touched at LAC 38, RECOVERED by DEN-B.Jones at LAC 40.", offense: "24")
+    #expect(statTotal(FantasyStat.receivingYards, kolar, [touchedForward], game: denAtLac) == 19)
+
+    // CLE @ NYJ: to the CLV 5 for 6, fallen on by Cleveland at the CLV 7. Box: 4.
+    let cleAtNyj = matchup(away: ("5", "CLE"), home: ("20", "NYJ"))
+    let sadiq = scoringPlayer(4686363, "Kenyon", "Sadiq", .tightEnd, team: 20)
+    let smith = scoringPlayer(15864, "Geno", "Smith", .quarterback, team: 20)
+    let catchAndFumble = scoringSnap("s", "(Shotgun) G.Smith pass short right to K.Sadiq to CLV 5 for 6 yards (Q.Williams). FUMBLES (Q.Williams), RECOVERED by CLV-R.Hickman at CLV 7.", offense: "20")
+    #expect(statTotal(FantasyStat.receivingYards, sadiq, [catchAndFumble], game: cleAtNyj) == 4)
+    #expect(statTotal(FantasyStat.passingYards, smith, [catchAndFumble], game: cleAtNyj) == 4)
+
+    // CLE @ NYJ: a run for -6, fallen on by a teammate back at the line. Box: 0.
+    let allen = scoringPlayer(4685720, "Braelon", "Allen", .runningBack, team: 20)
+    let forward = scoringSnap("a", "B.Allen right end to NYJ 40 for -6 yards (Q.Williams). FUMBLES (Q.Williams), recovered by NYJ-T.Patrick at NYJ 46.", offense: "20")
+    #expect(statTotal(FantasyStat.rushingYards, allen, [forward], game: cleAtNyj) == 0)
+
+    // DET @ ARI: to the ARZ 33 for 6, touched at the ARZ 40, kept at the ARZ 46. Box: -1.
+    let detAtAri = matchup(away: ("8", "DET"), home: ("22", "ARI"))
+    let stBrown = scoringPlayer(4374302, "Amon-Ra", "St. Brown", team: 8)
+    let touched = scoringSnap("t", "(Shotgun) J.Goff pass short middle to A.St. Brown to ARZ 33 for 6 yards (B.Browning). FUMBLES (B.Browning), touched at ARZ 40, recovered by DET-T.Ratledge at ARZ 46.", offense: "8")
+    #expect(statTotal(FantasyStat.receivingYards, stBrown, [touched], game: detAtAri) == -1)
+
+    // MIN @ NO: a run with no direction for -8, fallen on 3 yards further back. Box: -11.
+    let minAtNo = matchup(away: ("16", "MIN"), home: ("18", "NO"))
+    let jefferson = scoringPlayer(4262921, "Justin", "Jefferson", team: 16)
+    let reverse = scoringSnap("j", "(Shotgun) J.Jefferson to NO 49 for -8 yards (C.Wooden). FUMBLES (C.Wooden), recovered by MIN-K.Murray at MIN 48.", offense: "16")
+    #expect(statTotal(FantasyStat.rushAttempts, jefferson, [reverse], game: minAtNo) == 1)
+    #expect(statTotal(FantasyStat.rushingYards, jefferson, [reverse], game: minAtNo) == -11)
+
+    // CIN @ MIA: forward out of bounds untouched is no extra gain. Box: 4.
+    let cinAtMia = matchup(away: ("4", "CIN"), home: ("15", "MIA"))
+    let all = scoringPlayer(4430886, "Erick", "All", .tightEnd, team: 4)
+    let outOfBounds = scoringSnap("o", "(Shotgun) J.Burrow pass short right to E.All to MIA 24 for 4 yards (M.Taaffe). FUMBLES (M.Taaffe), ball out of bounds at MIA 18.", offense: "4")
+    #expect(statTotal(FantasyStat.receivingYards, all, [outOfBounds], game: cinAtMia) == 4)
+}
+
+/// Recorded live, MIN @ NO: caught for 7, fumbled at once, run back 87 for a touchdown.
+/// The 87 was being paid to the quarterback and the receiver as their own yards.
+@Test func aFumbleReturnTouchdownIsNotTheReceiversYards() {
+    let minAtNo = matchup(away: ("16", "MIN"), home: ("18", "NO"))
+    let price = scoringPlayer(4683062, "Myles", "Price", team: 16)
+    let murray = scoringPlayer(3917315, "Kyler", "Murray", .quarterback, team: 16)
+    let play = scoringSnap("p", "(Shotgun) K.Murray pass short left to M.Price to NO 12 for 7 yards (M.Emerson; P.Werner). FUMBLES (M.Emerson), RECOVERED by NO-J.Sanker at NO 13. J.Sanker for 87 yards, TOUCHDOWN. D.Carlson extra point is No Good, Wide Left, Center-C.Adomitis, Holder-R.Wright.", offense: "16", score: .touchdown)
+    #expect(statTotal(FantasyStat.receivingYards, price, [play], game: minAtNo) == 6)
+    #expect(statTotal(FantasyStat.passingYards, murray, [play], game: minAtNo) == 6)
+    #expect(statTotal(FantasyStat.fumblesLost, price, [play], game: minAtNo) == 1)
+}
+
+/// Recorded live: a flag on the offense enforced at its spot stops the gain there.
+@Test func anOffensiveFlagAtItsSpotStopsTheGain() {
+    // HOU @ TEN: to the HST 8 for 35, holding enforced at the HST 41. Box: 2.
+    let houAtTen = matchup(away: ("34", "HOU"), home: ("10", "TEN"))
+    let spears = scoringPlayer(4428557, "Tyjae", "Spears", .runningBack, team: 10)
+    let holding = scoringSnap("h", "(Shotgun) C.Ward pass short left to T.Spears pushed ob at HST 8 for 35 yards (R.Blankenship). HST-J.Pitre was injured during the play. PENALTY on TEN-A.Schlottmann, Offensive Holding, 10 yards, enforced at HST 41.", offense: "10")
+    #expect(statTotal(FantasyStat.receivingYards, spears, [holding], game: houAtTen) == 2)
+
+    // HOU @ TEN: a 24-yard touchdown run called back for holding at the TEN 18. Box: a
+    // carry for 6, and no touchdown.
+    let marks = scoringPlayer(4890973, "Woody", "Marks", .runningBack, team: 34)
+    let calledBack = scoringSnap("c", "(Shotgun) W.Marks right tackle for 24 yards, TOUCHDOWN NULLIFIED by Penalty.PENALTY on HST-B.Jordan, Offensive Holding, 10 yards, enforced at TEN 18.", offense: "34")
+    #expect(statTotal(FantasyStat.rushingYards, marks, [calledBack], game: houAtTen) == 6)
+    #expect(statTotal(FantasyStat.rushingTouchdowns, marks, [calledBack], game: houAtTen) == 0)
+
+    // A flag on the defense leaves the gain alone.
+    let roughness = scoringSnap("r", "(Shotgun) C.Ward pass short left to T.Spears pushed ob at HST 8 for 35 yards (R.Blankenship). PENALTY on HST-R.Blankenship, Unnecessary Roughness, 15 yards, enforced at HST 8.", offense: "10")
+    #expect(statTotal(FantasyStat.receivingYards, spears, [roughness], game: houAtTen) == 35)
+}
+
+/// Recorded live, PHI vs JAX: one scramble posted twice once replay re-spotted it — two
+/// play ids at 7:46 of the first quarter, both 3rd and 3 from the JAX 39, the next snap
+/// 4th and 1 from the 37. ESPN's box score has one carry for 2.
+@Test func aPlayPostedTwiceCountsOnce() {
+    let phiJax = matchup(away: ("30", "JAX"), home: ("21", "PHI"))
+    let hurts = scoringPlayer(4040715, "Jalen", "Hurts", .quarterback, team: 21)
+    func snap(_ id: String, _ text: String, down: Int, distance: Int, toGo: Int, clock: String) -> Play {
+        Play(id: id, sequence: 0, typeID: "5", typeText: "Rush", text: text,
+             downDistanceText: nil, yards: 0, period: 1, clock: clock,
+             isScoring: false, scoreKind: nil, isTurnover: false, isPenalty: false,
+             start: PlayNode(teamID: "21", yardsToEndzone: toGo, down: down, distance: distance),
+             end: PlayNode(), kind: .scrimmage)
+    }
+    let plays = [
+        snap("1", "(No Huddle, Shotgun) J.Hurts scrambles right end ran ob at JAX 37 for 2 yards (V.Miller).  The ball spot was assisted by replay.", down: 3, distance: 3, toGo: 39, clock: "7:46"),
+        snap("2", "(No Huddle, Shotgun) J.Hurts scrambles right tackle pushed ob at JAX 37 for 2 yards (F.Oluokun).  The ball spot was assisted by replay.", down: 3, distance: 3, toGo: 39, clock: "7:46"),
+        snap("3", "(Shotgun) J.Hurts up the middle to JAX 36 for 1 yard (V.Miller).", down: 4, distance: 1, toGo: 37, clock: "6:56"),
+    ]
+    let lines = onlyLine(hurts, plays, game: phiJax)
+    #expect(lines.map(\.play.id) == ["2", "3"])
+    #expect(lines.reduce(0) { $0 + $1.stats[FantasyStat.rushingYards] } == 3)
 }
 
 // MARK: - Kicks
@@ -422,13 +561,16 @@ private let patriots = scoringPlayer(-16017, "Patriots", "D/ST", .defense, team:
 }
 
 /// A muffed punt the kicking team falls on is a recovery for the kicking side's defense,
-/// although that side started the play with the ball.
+/// although that side started the play with the ball — and a fumble lost for the
+/// returner, as ESPN's box score charges it.
 @Test func aMuffedPuntIsARecoveryForTheKickingTeam() {
     let muff = scoringSnap("m", "M.Wishnowsky punts 48 yards to SEA 22, Center-J.Ashby. R.Shaheed MUFFS catch, RECOVERED by NE-M.Jones at SEA 28.", offense: "17")
     #expect(points(patriots, [muff]) == [2])
     #expect(points(seahawks, [muff]) == [0])
-    // A muff is not a fumble.
-    #expect(points(shaheed, [muff]) == [0])
+    #expect(points(shaheed, [muff]) == [-2])
+    // Kept by his own side, it is nothing.
+    let kept = scoringSnap("k", "M.Wishnowsky punts 48 yards to SEA 22, Center-J.Ashby. R.Shaheed MUFFS catch, and recovers at SEA 20.", offense: "17")
+    #expect(points(shaheed, [kept]) == [0])
 }
 
 // MARK: - Names

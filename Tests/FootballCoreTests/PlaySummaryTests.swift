@@ -169,6 +169,82 @@ import Testing
     #expect(play.recoveringTeam == "CIN")
 }
 
+/// Recorded live, CIN @ MIA: lost, run back and fumbled again. Two loose balls leave
+/// `fumbledBy` empty, but each fumble is still somebody's.
+@Test func eachFumbleOfADoubleFumbleIsKeptApart() {
+    let play = PlaySummary.parse("(Shotgun) J.Burrow pass short left to C.Brown to MIA 7 for 3 yards (C.Johnson). FUMBLES (C.Johnson), RECOVERED by MIA-C.Robinson at MIA 7. C.Robinson to MIA 18 for 11 yards (J.Chase). FUMBLES (J.Chase), recovered by MIA-J.Uche at MIA 23.")
+    #expect(play.takeaway == .fumble)
+    #expect(play.recoveringTeam == "MIA")
+    #expect(play.fumbledBy == nil)
+    #expect(play.fumbles == [
+        .init(by: "C. Brown", lost: true, endedAt: .init(side: "MIA", yardLine: 7)),
+        .init(by: "C. Robinson", lost: false, afterTakeaway: true, endedAt: .init(side: "MIA", yardLine: 23)),
+    ])
+}
+
+@Test func aLoneFumbleIsListedToo() {
+    let lost = PlaySummary.parse("(Shotgun) T.Shough sacked at NO 24 for -7 yards (R.McCreary). FUMBLES (R.McCreary) [R.McCreary], RECOVERED by DET-D.Wonnum at NO 25.")
+    #expect(lost.fumbles == [.init(by: "T. Shough", lost: true, endedAt: .init(side: "NO", yardLine: 25))])
+    let kept = PlaySummary.parse("J.Goff FUMBLES (Aborted) at DET 31, recovered by DET-J.Williams at DET 25. J.Williams to DET 32 for 7 yards (D.Godchaux).")
+    #expect(kept.fumbles == [.init(by: "J. Goff", lost: false, endedAt: .init(side: "DET", yardLine: 25))])
+    // Picked off first, so the defender's to lose.
+    let pick = PlaySummary.parse("(Shotgun) C.Stroud pass deep right intended for J.Noel INTERCEPTED by D.Lenoir at SF 44. D.Lenoir to HST 30 for 26 yards (L.Tomlinson). FUMBLES (L.Tomlinson), recovered by SF-M.Williams at HST 30.")
+    #expect(pick.fumbles == [.init(by: "D. Lenoir", lost: false, afterTakeaway: true, endedAt: .init(side: "HST", yardLine: 30))])
+}
+
+/// Recorded live, CHI @ GB: the first spot the loose ball was touched, not where it was
+/// fallen on — that is where ESPN stops the catch's yards.
+@Test func aFumbleRemembersWhereTheBallFirstStopped() {
+    let play = PlaySummary.parse("(Shotgun) C.Keenum pass short right to R.Odunze to GB 31 for 9 yards (Z.Franklin). FUMBLES (Z.Franklin), touched at GB 37, RECOVERED by GB-E.Williams at GB 43. E.Williams to GB 43 for no gain (J.Thuney).")
+    #expect(play.yards == 9)
+    #expect(play.gainSpot == .init(side: "GB", yardLine: 31))
+    #expect(play.fumbles.first?.endedAt == .init(side: "GB", yardLine: 37))
+
+    let outOfBounds = PlaySummary.parse("(Shotgun) J.Burrow pass short right to E.All to MIA 24 for 4 yards (M.Taaffe). FUMBLES (M.Taaffe), ball out of bounds at MIA 18.")
+    #expect(outOfBounds.fumbles == [.init(by: "E. All", lost: false, endedAt: .init(side: "MIA", yardLine: 18), outOfBounds: true)])
+}
+
+/// Recorded live, SF @ SEA and CIN @ MIA: ESPN's box score charges a muffed punt the
+/// kicking team fell on as a fumble lost, and one the returner's side kept as nothing.
+@Test func aMuffIsAFumbleOnlyWhenTheKickingTeamGetsIt() {
+    let lost = PlaySummary.parse("M.Dickson punts 39 yards to SF 35, Center-C.Stoll. J.Cowing MUFFS catch, touched at SF 33, RECOVERED by SEA-E.Saubert at SF 24.")
+    #expect(lost.fumbles.map(\.by) == ["J. Cowing"])
+    #expect(lost.fumbles.first?.lost == true)
+    let kept = PlaySummary.parse("R.Patterson kicks 55 yards from MIA 35 to CIN 10. D.Meyers MUFFS catch, and recovers at CIN 14. D.Meyers to CIN 23 for 9 yards (J.Simpson; S.Heyward).")
+    #expect(kept.fumbles.isEmpty)
+}
+
+/// Recorded live, MIN @ NO: a run with no direction is still a carry.
+@Test func aRunWithNoDirectionIsACarry() {
+    let play = PlaySummary.parse("(Shotgun) J.Jefferson to NO 49 for -8 yards (C.Wooden). FUMBLES (C.Wooden), recovered by MIN-K.Murray at MIN 48.")
+    #expect(play.kind == .rush)
+    #expect(play.rusher == "J. Jefferson")
+    #expect(play.yards == -8)
+    // After a recovery the same phrasing is the recoverer's advance, not a carry.
+    let advance = PlaySummary.parse("(Shotgun) D.Watson FUMBLES (Aborted) at CLV 9, recovered by CLV-R.Sanders at CLV 11. R.Sanders to CLV 15 for 4 yards (D.Jackson; D.Belton).")
+    #expect(advance.kind != .rush)
+}
+
+/// Recorded live, MIN @ NO: caught for 7, fumbled, run back 87. The catch is still 7.
+@Test func aTakeawayReturnedForATouchdownLeavesTheCatchItsYards() {
+    let play = PlaySummary.parse("(Shotgun) K.Murray pass short left to M.Price to NO 12 for 7 yards (M.Emerson; P.Werner). FUMBLES (M.Emerson), RECOVERED by NO-J.Sanker at NO 13. J.Sanker for 87 yards, TOUCHDOWN. D.Carlson extra point is No Good, Wide Left, Center-C.Adomitis, Holder-R.Wright.")
+    #expect(play.touchdown == .fumbleReturn)
+    #expect(play.yards == 7)
+    #expect(play.returnYards == 87)
+    #expect(play.scorer == "J. Sanker")
+}
+
+/// Recorded live, HOU @ TEN: holding enforced at its spot calls the touchdown back but
+/// not the run, and there is no "No Play" to say otherwise.
+@Test func aTouchdownCalledBackAtTheSpotOfAFoulIsStillARun() {
+    let play = PlaySummary.parse("(Shotgun) W.Marks right tackle for 24 yards, TOUCHDOWN NULLIFIED by Penalty.PENALTY on HST-B.Jordan, Offensive Holding, 10 yards, enforced at TEN 18.")
+    #expect(play.kind == .rush)
+    #expect(play.touchdown == nil)
+    #expect(play.yards == 24)
+    #expect(play.gainSpot == .init(side: nil, yardLine: 0))
+    #expect(play.fouls == [.init(team: "HST", enforcedAt: .init(side: "TEN", yardLine: 18))])
+}
+
 @Test func stripSackRecoveredByTheDefense() {
     let play = PlaySummary.parse("(Shotgun) T.Shough sacked at NO 24 for -7 yards (R.McCreary). FUMBLES (R.McCreary) [R.McCreary], RECOVERED by DET-D.Wonnum at NO 25.")
     #expect(play.kind == .sack)

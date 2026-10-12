@@ -225,22 +225,22 @@ public struct FantasyGameScorer: Sendable {
         var isRepeatedTry: Bool
         // Read off the text once, rather than once per player.
         var hasLateral: Bool
-        /// A ball fumbled rather than muffed: a muff is not a fumble.
-        var hasFumble: Bool
         var isBlockedPunt: Bool
         var isBlockedExtraPoint: Bool
         /// Who was sacked, on a sack in the end zone parsed as the safety it scored.
         var sackedInEndZone: String?
+        /// The passing, rushing or receiving yards the play is worth. See `credited`.
+        var gain: Double
 
         var isSack: Bool { summary.kind == .sack || sackedInEndZone != nil }
 
-        init(play: Play, summary: PlaySummary, isRepeatedTry: Bool) {
+        init(play: Play, summary: PlaySummary, isRepeatedTry: Bool, gain: Int?) {
             self.play = play
             self.summary = summary
             self.isRepeatedTry = isRepeatedTry
+            self.gain = Double(gain ?? 0)
             let text = play.text
             hasLateral = text.range(of: "lateral", options: .caseInsensitive) != nil
-            hasFumble = text.contains("FUMBLES") && !text.contains("MUFFS")
             isBlockedPunt = summary.kind == .punt && text.contains("punt is BLOCKED")
             isBlockedExtraPoint = text.contains("extra point is Blocked")
             sackedInEndZone = summary.kind == .safety ? Rx.sackedPasser(in: text) : nil
@@ -259,10 +259,16 @@ public struct FantasyGameScorer: Sendable {
         // Drives arrive newest first and plays within a drive oldest first.
         let plays = detail.drives.reversed().flatMap(\.plays)
             .filter { $0.kind != .administrative && !$0.text.isEmpty }
+        let teams = game.map { [($0.home.id, $0.home.abbreviation), ($0.away.id, $0.away.abbreviation)] } ?? []
 
         var snaps: [Snap] = []
         var lastTouchdownHadTry = true
-        for play in plays {
+        for (index, play) in plays.enumerated() {
+            // ESPN can post a play again once a replay has re-spotted it and leave the
+            // first copy in place: two scrambles by one quarterback from the same spot
+            // at the same second, the next snap starting where either ended. Only the
+            // later copy counts.
+            if index + 1 < plays.count, Self.isSameSnap(play, plays[index + 1]) { continue }
             let summary = parse(play)
             var repeated = false
             switch summary.kind {
@@ -276,10 +282,11 @@ public struct FantasyGameScorer: Sendable {
                     lastTouchdownHadTry = summary.tryResult != nil
                 }
             }
-            snaps.append(Snap(play: play, summary: summary, isRepeatedTry: repeated))
+            let gain = Self.credited(summary, offense: play.start.teamID, teams: teams)
+            snaps.append(Snap(play: play, summary: summary, isRepeatedTry: repeated, gain: gain))
         }
         self.snaps = snaps
-        self.teams = game.map { [($0.home.id, $0.home.abbreviation), ($0.away.id, $0.away.abbreviation)] } ?? []
+        self.teams = teams
 
         var initials: [String: Set<String>] = [:]
         for play in plays {
@@ -325,7 +332,7 @@ public struct FantasyGameScorer: Sendable {
 
         guard !snap.hasLateral else { return line }
 
-        let yards = Double(play.yards ?? 0)
+        let yards = snap.gain
         switch play.kind {
         case .pass where onOffense:
             let isTouchdown = play.touchdown == .pass
@@ -389,11 +396,13 @@ public struct FantasyGameScorer: Sendable {
             line.add(FantasyStat.fumbleRecoveredForTouchdown)
         }
 
-        // A muff is not a fumble, and a loose ball fumbled back and forth names nobody.
-        if snap.hasFumble, matcher.isHim(play.fumbledBy),
-           isKick ? onReturnTeam : onOffense {
+        // Each fumble is his only if his side had the ball then: a defender who picks it
+        // off and drops it is never the receiver it was meant for.
+        let hadItAtFirst = isKick ? onReturnTeam : onOffense
+        for fumble in play.fumbles where matcher.isHim(fumble.by)
+            && hadItAtFirst != fumble.afterTakeaway {
             line.add(FantasyStat.fumbles)
-            if play.takeaway == .fumble { line.add(FantasyStat.fumblesLost) }
+            if fumble.lost { line.add(FantasyStat.fumblesLost) }
         }
 
         twoPointStats(play, matcher: matcher, into: &line)
@@ -511,8 +520,70 @@ public struct FantasyGameScorer: Sendable {
     }
 
     private func teamID(textAbbreviation: String) -> String? {
+        Self.teamID(textAbbreviation: textAbbreviation, teams: teams)
+    }
+
+    private static func teamID(textAbbreviation: String, teams: [(id: String, abbreviation: String)]) -> String? {
         let mapped = PlaySummary.scoreboardAbbreviation(textAbbreviation)
         return teams.first { $0.abbreviation == mapped || $0.abbreviation == textAbbreviation }?.id
+    }
+
+    // MARK: - Yards
+
+    /// The yards a pass or run is worth, which ESPN's box score can put short of the
+    /// text's "for N yards" — every rule here was read off a live Sunday's box scores,
+    /// play against play:
+    ///
+    /// - A fumble: to where the loose ball was first touched or fallen on. A catch to the
+    ///   CLV 5 for 6, recovered by Cleveland at the CLV 7, is 4 yards. Kept by his own
+    ///   side, that holds whichever way the ball went: a run for -6, fallen on by a
+    ///   teammate back at the line, is none. Lost or out of bounds, it only ever takes
+    ///   yards off: a run for no gain that the defense fell on a yard on is still none.
+    /// - A flag on the offense enforced at its spot — holding downfield, say — stops the
+    ///   gain at the flag: 35 yards to the HST 8, holding at the HST 41, is 2. A
+    ///   touchdown called back that way counts to the flag too.
+    ///
+    /// Without the team abbreviations to tell which side a spot is on, the text's figure.
+    private static func credited(_ play: PlaySummary, offense: String?,
+                                 teams: [(id: String, abbreviation: String)]) -> Int? {
+        guard let gain = play.yards else { return nil }
+        guard let offense, let end = play.gainSpot,
+              let endToGo = yardsToGoal(end, offense: offense, teams: teams) else { return gain }
+        func gainTo(_ spot: PlaySummary.Spot) -> Int? {
+            yardsToGoal(spot, offense: offense, teams: teams).map { gain + endToGo - $0 }
+        }
+
+        var credited = gain
+        let carrier = play.kind == .rush ? play.rusher : play.receiver
+        if let fumble = play.fumbles.first, !fumble.afterTakeaway, fumble.by == carrier,
+           let spot = fumble.endedAt, let to = gainTo(spot) {
+            credited = fumble.lost || fumble.outOfBounds ? min(credited, to) : to
+        }
+        // A touchdown stands whatever is flagged after it.
+        if play.touchdown == nil {
+            for foul in play.fouls where teamID(textAbbreviation: foul.team, teams: teams) == offense {
+                if let to = gainTo(foul.enforcedAt) { credited = min(credited, to) }
+            }
+        }
+        return credited
+    }
+
+    /// How far `spot` is from the goal line `offense` is going for.
+    private static func yardsToGoal(_ spot: PlaySummary.Spot, offense: String,
+                                    teams: [(id: String, abbreviation: String)]) -> Int? {
+        guard let side = spot.side else { return spot.yardLine }
+        guard let team = teamID(textAbbreviation: side, teams: teams) else { return nil }
+        return team == offense ? 100 - spot.yardLine : spot.yardLine
+    }
+
+    /// The same snap posted twice: same quarter, clock, team, down, distance and spot.
+    /// A down really replayed from the same spot, after offsetting flags, follows a "No
+    /// Play" that scores nothing either way.
+    private static func isSameSnap(_ a: Play, _ b: Play) -> Bool {
+        guard let down = a.start.down, down > 0, !a.clock.isEmpty, a.start.teamID != nil else { return false }
+        return a.period == b.period && a.clock == b.clock && a.start.teamID == b.start.teamID
+            && down == b.start.down && a.start.distance == b.start.distance
+            && a.start.yardsToEndzone == b.start.yardsToEndzone
     }
 
     // MARK: - Game totals

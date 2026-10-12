@@ -353,6 +353,16 @@ public enum RedZoneRanker {
             return "End of Q\(game.period)"
         }
         switch game.situation?.lastPlayTypeID {
+        // The quarter is over and the next not yet snapped. The play feed's header moves
+        // on to "15:00 - 4th" while the teams are still changing ends, and the game sat
+        // featured through the break on the strength of a fourth-quarter clock.
+        case "2"?:
+            let text = game.situation?.lastPlayText?.trimmingCharacters(in: .whitespaces) ?? ""
+            guard let quarter = text.range(of: "[1-4]$", options: .regularExpression) else {
+                return "End of quarter"
+            }
+            return "End of Q\(text[quarter])"
+        case "65"?: return "Halftime"
         case "74"?: return "Official timeout"
         case "75"?: return "Two-minute warning"
         case "21"?:
