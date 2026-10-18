@@ -208,8 +208,8 @@ public struct FantasyPlayLine: Sendable, Hashable {
 /// Stats come out of `PlaySummary`, by role: the passer and the catcher of a completion,
 /// the runner, the kicker. Being named is not enough, so a tackler or a player flagged
 /// for a penalty is never credited. A play wiped out by a flag, a placeholder awaiting
-/// a replay ruling and anything with a lateral in it score nothing: the parser cannot
-/// say how the yards split, and a wrong number is worse than none. Yardage chunks and
+/// a replay ruling score nothing, and after a lateral only the passer is credited: the
+/// parser cannot say how the yards split, and a wrong number is worse than none. Yardage chunks and
 /// milestones (a point every 10 rushing yards, a 100-yard game) are game totals, so
 /// they are counted on the play that crossed the line.
 ///
@@ -330,7 +330,10 @@ public struct FantasyGameScorer: Sendable {
 
         kickingStats(play, matcher: matcher, into: &line)
 
-        guard !snap.hasLateral else { return line }
+        guard !snap.hasLateral else {
+            lateralPasserStats(snap, onOffense: onOffense, matcher: matcher, into: &line)
+            return line
+        }
 
         let yards = snap.gain
         switch play.kind {
@@ -407,6 +410,25 @@ public struct FantasyGameScorer: Sendable {
 
         twoPointStats(play, matcher: matcher, into: &line)
         return line
+    }
+
+    /// A completion with a lateral after it. Who gained what past the pitch is left
+    /// alone, but the passer's share is not in doubt: ESPN credits him the completion and
+    /// the whole play's yards — CHI @ ATL, 2 to Odunze and 12 more after his lateral, was
+    /// 14 passing yards in the box score. The whole play's yards are ESPN's own figure
+    /// for it, or the text's legs added up when the feed has none.
+    private func lateralPasserStats(_ snap: Snap, onOffense: Bool, matcher: NameMatcher,
+                                    into line: inout FantasyStatLine) {
+        let play = snap.summary
+        guard play.kind == .pass, onOffense, matcher.isHim(play.passer) else { return }
+        let yards = snap.play.yards != 0 ? snap.play.yards : Rx.legYards(in: snap.play.text)
+        line.add(FantasyStat.passAttempts)
+        line.add(FantasyStat.passCompletions)
+        line.add(FantasyStat.passingYards, Double(yards))
+        if play.touchdown == .pass
+            || (snap.play.scoreKind == .touchdown && play.takeaway == nil && play.fumbles.isEmpty) {
+            line.add(FantasyStat.passingTouchdowns)
+        }
     }
 
     private func kickingStats(_ play: PlaySummary, matcher: NameMatcher, into line: inout FantasyStatLine) {
@@ -663,6 +685,17 @@ private enum Rx {
         guard let match = sacked.firstMatch(in: text, range: range),
               let name = Range(match.range(at: 1), in: text) else { return nil }
         return PlaySummary.display(String(text[name]))
+    }
+
+    static let leg = try! NSRegularExpression(pattern: "for (-?\\d+) yards?")
+
+    /// "…for 2 yards. Lateral to R.Johnson … for 12 yards" → 14.
+    static func legYards(in text: String) -> Int {
+        let range = NSRange(text.startIndex..., in: text)
+        return leg.matches(in: text, range: range).reduce(0) { total, match in
+            guard let r = Range(match.range(at: 1), in: text) else { return total }
+            return total + (Int(text[r]) ?? 0)
+        }
     }
 }
 

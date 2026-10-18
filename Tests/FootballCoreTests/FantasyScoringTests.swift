@@ -316,11 +316,24 @@ private let patriots = scoringPlayer(-16017, "Patriots", "D/ST", .defense, team:
     #expect(lines[0].stats.isEmpty)
 }
 
-/// After a lateral the parser cannot say who gained what, so the play is left alone.
-@Test func lateralsAreSkippedRatherThanGuessed() {
+/// After a lateral the parser cannot say who gained what past the pitch, so the
+/// catcher is left alone; the passer has the completion and the whole play's yards.
+@Test func lateralsCreditOnlyThePasser() {
     let play = scoringSnap("l", "S.Darnold pass short right to J.Smith-Njigba to SEA 40 for 10 yards. J.Smith-Njigba lateral to K.Walker to NE 40 for 20 yards (C.Gonzalez).")
     #expect(points(smithNjigba, [play]) == [0])
-    #expect(points(darnold, [play]) == [0])
+    #expect(points(darnold, [play]) == [1.2])
+    let line = onlyLine(darnold, [play])[0].stats
+    #expect(line[FantasyStat.passCompletions] == 1)
+    #expect(line[FantasyStat.passingYards] == 30)
+}
+
+/// Caleb Williams, CHI @ ATL: 2 to Odunze, 12 more after the lateral. ESPN's box score
+/// had 14 passing yards for it, which is also the feed's own figure for the play.
+@Test func aLateralPlaysPassingYardsAreTheFeedsFigure() {
+    let williams = scoringPlayer(4431611, "Caleb", "Williams", .quarterback, team: 3)
+    var play = scoringSnap("cw", "(Shotgun) C.Williams pass short right to R.Odunze to ATL 40 for 2 yards. Lateral to R.Johnson pushed ob at ATL 28 for 12 yards (H.Perkins).", offense: "3")
+    play.yards = 14
+    #expect(points(williams, [play]) == [0.56])
 }
 
 @Test func aFumbleLostCostsTheCarrier() {
