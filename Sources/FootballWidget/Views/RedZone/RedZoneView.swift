@@ -189,21 +189,40 @@ struct RedZoneControls: View {
                 controller.setMini(true)
             } label: {
                 Image(systemName: "arrow.down.right.and.arrow.up.left")
-                    .font(.system(size: 7.5, weight: .semibold))
+                    .font(.system(size: 9, weight: .semibold))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(RedZoneIconButtonStyle())
             .foregroundStyle(.secondary)
             .help("Shrink to a pill")
             Button {
                 controller.close()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 7.5, weight: .semibold))
+                    .font(.system(size: 9, weight: .semibold))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(RedZoneIconButtonStyle())
             .foregroundStyle(.secondary)
             .help("Close RedZone")
         }
+    }
+}
+
+/// A small round button whose whole circle takes the click, not just the glyph's
+/// pixels: a plain-styled button on macOS only answers where something is drawn, so
+/// the circle is always drawn, all but invisible until the pointer is over it.
+struct RedZoneIconButtonStyle: ButtonStyle {
+    @State private var isHovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .frame(width: 18, height: 18)
+            .background(
+                Circle().fill(Color.primary.opacity(
+                    configuration.isPressed ? 0.22 : isHovered ? 0.12 : 0.001
+                ))
+            )
+            .contentShape(Circle())
+            .onHover { isHovered = $0 }
     }
 }
 
