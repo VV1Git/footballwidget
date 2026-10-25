@@ -283,7 +283,8 @@ public struct FantasyGameScorer: Sendable {
                     lastTouchdownHadTry = summary.tryResult != nil
                 }
             }
-            let gain = Self.credited(summary, offense: play.start.teamID, teams: teams)
+            let gain = Self.credited(summary, offense: play.start.teamID, teams: teams,
+                                     recovererRan: Rx.ranAfterOwnRecovery(in: play.text))
             snaps.append(Snap(play: play, summary: summary, isRepeatedTry: repeated, gain: gain))
         }
         self.snaps = snaps
@@ -579,13 +580,17 @@ public struct FantasyGameScorer: Sendable {
     ///   side, that holds whichever way the ball went: a run for -6, fallen on by a
     ///   teammate back at the line, is none. Lost or out of bounds, it only ever takes
     ///   yards off: a run for no gain that the defense fell on a yard on is still none.
+    ///   A catch whose loose ball a teammate picks up ahead of it and runs on with is
+    ///   the catch's own yards and no more: NYG @ HOU, a catch to the HST 27 for 2,
+    ///   fallen on at the HST 31 and run to the HST 34, was 2 for passer and catcher.
     /// - A flag on the offense enforced at its spot — holding downfield, say — stops the
     ///   gain at the flag: 35 yards to the HST 8, holding at the HST 41, is 2. A
     ///   touchdown called back that way counts to the flag too.
     ///
     /// Without the team abbreviations to tell which side a spot is on, the text's figure.
     private static func credited(_ play: PlaySummary, offense: String?,
-                                 teams: [(id: String, abbreviation: String)]) -> Int? {
+                                 teams: [(id: String, abbreviation: String)],
+                                 recovererRan: Bool = false) -> Int? {
         guard let gain = play.yards else { return nil }
         guard let offense, let end = play.gainSpot,
               let endToGo = yardsToGoal(end, offense: offense, teams: teams) else { return gain }
@@ -597,7 +602,8 @@ public struct FantasyGameScorer: Sendable {
         let carrier = play.kind == .rush ? play.rusher : play.receiver
         if let fumble = play.fumbles.first, !fumble.afterTakeaway, fumble.by == carrier,
            let spot = fumble.endedAt, let to = gainTo(spot) {
-            credited = fumble.lost || fumble.outOfBounds ? min(credited, to) : to
+            let keepsCatch = play.kind == .pass && recovererRan
+            credited = fumble.lost || fumble.outOfBounds || keepsCatch ? min(credited, to) : to
         }
         // A touchdown stands whatever is flagged after it.
         if play.touchdown == nil {
@@ -706,6 +712,15 @@ private enum Rx {
     }
 
     static let leg = try! NSRegularExpression(pattern: "for (-?\\d+) yards?")
+
+    /// "…recovered by HST-W.Marks at HST 31. W.Marks to HST 34 for 3 yards": a loose
+    /// ball his own side fell on and ran on with. ESPN writes a recovery by the other
+    /// side in capitals, so the lowercase one is his team's.
+    static func ranAfterOwnRecovery(in text: String) -> Bool {
+        guard let recovered = text.range(of: "recovered by ") else { return false }
+        let after = text[recovered.upperBound...]
+        return after.range(of: "for -?\\d+ yards?|for no gain", options: .regularExpression) != nil
+    }
 
     /// Each "lateral to R.Johnson … for 12 yards" leg, in order. A leg with no yards
     /// given — "for no gain" — is worth none.

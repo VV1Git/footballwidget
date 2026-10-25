@@ -436,6 +436,15 @@ private func statTotal(_ stat: Int, _ player: RosterPlayer, _ plays: [Play], gam
     let all = scoringPlayer(4430886, "Erick", "All", .tightEnd, team: 4)
     let outOfBounds = scoringSnap("o", "(Shotgun) J.Burrow pass short right to E.All to MIA 24 for 4 yards (M.Taaffe). FUMBLES (M.Taaffe), ball out of bounds at MIA 18.", offense: "4")
     #expect(statTotal(FantasyStat.receivingYards, all, [outOfBounds], game: cinAtMia) == 4)
+
+    // NYG @ HOU, 25 October: to the HST 27 for 2, fallen on by a teammate at the HST 31
+    // and run on to the HST 34. Box: 2 for both.
+    let nygAtHou = matchup(away: ("19", "NYG"), home: ("34", "HST"))
+    let stroud = scoringPlayer(4432577, "C.J.", "Stroud", .quarterback, team: 34)
+    let hutchinson = scoringPlayer(4429025, "Xavier", "Hutchinson", team: 34)
+    let ranOn = scoringSnap("h", "(Shotgun) C.Stroud pass short middle to X.Hutchinson to HST 27 for 2 yards. FUMBLES, recovered by HST-W.Marks at HST 31. W.Marks to HST 34 for 3 yards (M.McFadden).", offense: "34")
+    #expect(statTotal(FantasyStat.passingYards, stroud, [ranOn], game: nygAtHou) == 2)
+    #expect(statTotal(FantasyStat.receivingYards, hutchinson, [ranOn], game: nygAtHou) == 2)
 }
 
 /// Recorded live, MIN @ NO: caught for 7, fumbled at once, run back 87 for a touchdown.
