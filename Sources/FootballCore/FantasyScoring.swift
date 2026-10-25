@@ -208,8 +208,9 @@ public struct FantasyPlayLine: Sendable, Hashable {
 /// Stats come out of `PlaySummary`, by role: the passer and the catcher of a completion,
 /// the runner, the kicker. Being named is not enough, so a tackler or a player flagged
 /// for a penalty is never credited. A play wiped out by a flag, a placeholder awaiting
-/// a replay ruling score nothing, and after a lateral only the passer is credited: the
-/// parser cannot say how the yards split, and a wrong number is worse than none. Yardage chunks and
+/// a replay ruling score nothing, and a pass with a lateral in it is split leg by leg
+/// as ESPN does; anything else with a lateral in it scores nothing, since the parser
+/// cannot say how the yards split, and a wrong number is worse than none. Yardage chunks and
 /// milestones (a point every 10 rushing yards, a 100-yard game) are game totals, so
 /// they are counted on the play that crossed the line.
 ///
@@ -331,7 +332,7 @@ public struct FantasyGameScorer: Sendable {
         kickingStats(play, matcher: matcher, into: &line)
 
         guard !snap.hasLateral else {
-            lateralPasserStats(snap, onOffense: onOffense, matcher: matcher, into: &line)
+            lateralPassStats(snap, onOffense: onOffense, matcher: matcher, into: &line)
             return line
         }
 
@@ -412,22 +413,39 @@ public struct FantasyGameScorer: Sendable {
         return line
     }
 
-    /// A completion with a lateral after it. Who gained what past the pitch is left
-    /// alone, but the passer's share is not in doubt: ESPN credits him the completion and
-    /// the whole play's yards — CHI @ ATL, 2 to Odunze and 12 more after his lateral, was
-    /// 14 passing yards in the box score. The whole play's yards are ESPN's own figure
-    /// for it, or the text's legs added up when the feed has none.
-    private func lateralPasserStats(_ snap: Snap, onOffense: Bool, matcher: NameMatcher,
-                                    into line: inout FantasyStatLine) {
+    /// A completion with a lateral after it, credited as ESPN's box score does — read
+    /// off CHI @ ATL, "C.Williams pass … to R.Odunze … for 2 yards. Lateral to R.Johnson
+    /// … for 12 yards": Williams had the completion and 14 passing yards, Odunze the
+    /// catch and his 2, Johnson 12 receiving yards and no catch. The whole play's yards
+    /// are ESPN's own figure for it, or the text's legs added up when the feed has none.
+    /// A touchdown is the last man's. A loose ball on the way is left to nobody but the
+    /// passer: who had it, and where, is past what the text says plainly.
+    private func lateralPassStats(_ snap: Snap, onOffense: Bool, matcher: NameMatcher,
+                                  into line: inout FantasyStatLine) {
         let play = snap.summary
-        guard play.kind == .pass, onOffense, matcher.isHim(play.passer) else { return }
-        let yards = snap.play.yards != 0 ? snap.play.yards : Rx.legYards(in: snap.play.text)
-        line.add(FantasyStat.passAttempts)
-        line.add(FantasyStat.passCompletions)
-        line.add(FantasyStat.passingYards, Double(yards))
-        if play.touchdown == .pass
-            || (snap.play.scoreKind == .touchdown && play.takeaway == nil && play.fumbles.isEmpty) {
-            line.add(FantasyStat.passingTouchdowns)
+        guard play.kind == .pass, onOffense else { return }
+        let text = snap.play.text
+        let isTouchdown = play.touchdown == .pass
+            || (snap.play.scoreKind == .touchdown && play.takeaway == nil && play.fumbles.isEmpty)
+        if matcher.isHim(play.passer) {
+            let yards = snap.play.yards != 0 ? snap.play.yards : Rx.legYards(in: text)
+            line.add(FantasyStat.passAttempts)
+            line.add(FantasyStat.passCompletions)
+            line.add(FantasyStat.passingYards, Double(yards))
+            if isTouchdown { line.add(FantasyStat.passingTouchdowns) }
+        }
+        guard play.fumbles.isEmpty, play.takeaway == nil else { return }
+        let laterals = Rx.lateralLegs(in: text)
+        if matcher.isHim(play.receiver) {
+            line.add(FantasyStat.receptionsCounted)
+            line.add(FantasyStat.receptions)
+            line.add(FantasyStat.targets)
+            line.add(FantasyStat.receivingYards, Double(Rx.firstLegYards(in: text) ?? 0))
+            if isTouchdown, laterals.isEmpty { line.add(FantasyStat.receivingTouchdowns) }
+        }
+        for (index, leg) in laterals.enumerated() where matcher.isHim(leg.name) {
+            line.add(FantasyStat.receivingYards, Double(leg.yards))
+            if isTouchdown, index == laterals.count - 1 { line.add(FantasyStat.receivingTouchdowns) }
         }
     }
 
@@ -688,6 +706,31 @@ private enum Rx {
     }
 
     static let leg = try! NSRegularExpression(pattern: "for (-?\\d+) yards?")
+
+    /// Each "lateral to R.Johnson … for 12 yards" leg, in order. A leg with no yards
+    /// given — "for no gain" — is worth none.
+    static let lateralLeg = try! NSRegularExpression(
+        pattern: "[Ll]ateral to ([A-Z][a-z]{0,2}\\.(?:St\\. |Van )?[A-Z][A-Za-z'\\-]*[A-Za-z])[^.]*?(?:for (-?\\d+) yards?|for no gain)"
+    )
+
+    static func lateralLegs(in text: String) -> [(name: String, yards: Int)] {
+        let range = NSRange(text.startIndex..., in: text)
+        return lateralLeg.matches(in: text, range: range).compactMap { match in
+            guard let name = Range(match.range(at: 1), in: text) else { return nil }
+            let yards = Range(match.range(at: 2), in: text).flatMap { Int(text[$0]) } ?? 0
+            return (PlaySummary.display(String(text[name])), yards)
+        }
+    }
+
+    /// The catch's own yards: the first leg, before anyone laterals.
+    static func firstLegYards(in text: String) -> Int? {
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = leg.firstMatch(in: text, range: range),
+              let r = Range(match.range(at: 1), in: text) else { return nil }
+        let lateral = text.range(of: "lateral", options: .caseInsensitive)
+        if let lateral, r.lowerBound > lateral.lowerBound { return 0 }
+        return Int(text[r])
+    }
 
     /// "…for 2 yards. Lateral to R.Johnson … for 12 yards" → 14.
     static func legYards(in text: String) -> Int {

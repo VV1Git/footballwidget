@@ -34,8 +34,10 @@ final class FantasyStore {
     /// Per league: how the plays' own points compare with ESPN's totals. See
     /// `checkAgainstESPN`.
     private(set) var accuracy: [String: FantasyAccuracy] = [:]
-    /// League id → player id → what his scored plays add up to in this game.
-    @ObservationIgnored private var computedTotals: [String: [Int: Double]] = [:]
+    /// League id → game id → player id → what his scored plays add up to in that game.
+    /// Kept by game so last week's figures leave with last week's slate: they stayed
+    /// put once, and were checked against ESPN's new, empty week as mismatches.
+    @ObservationIgnored private var computedTotals: [String: [String: [Int: Double]]] = [:]
     /// "league|player" → when his figure and ESPN's first disagreed.
     @ObservationIgnored private var disagreeingSince: [String: Date] = [:]
     /// Scoreboard plays already scored for `provisionalCredits`, by play id and text.
@@ -314,7 +316,8 @@ final class FantasyStore {
         var result: [String: FantasyAccuracy] = [:]
         var stillDisagreeing: [String: Date] = [:]
         for (leagueID, matchup) in allMatchups {
-            let computed = computedTotals[leagueID] ?? [:]
+            let computed = (computedTotals[leagueID] ?? [:]).values
+                .reduce(into: [Int: Double]()) { $0.merge($1) { _, newer in newer } }
             var report = FantasyAccuracy()
             for entry in matchup.allPlayers where entry.player.isStarter && entry.player.position != .defense {
                 guard let ours = computed[entry.player.id] else { continue }
@@ -418,6 +421,7 @@ final class FantasyStore {
         scored = scored.filter { onSlate.contains($0.key) }
         judged = judged.filter { onSlate.contains($0.key) }
         awaitingRuling = awaitingRuling.filter { onSlate.contains($0.key) }
+        computedTotals = computedTotals.mapValues { $0.filter { onSlate.contains($0.key) } }
         rebuildCredits()
     }
 
@@ -465,7 +469,7 @@ final class FantasyStore {
             for entry in players {
                 var gameTotal = 0.0
                 defer {
-                    computedTotals[leagueID, default: [:]][entry.player.id] = (gameTotal * 100).rounded() / 100
+                    computedTotals[leagueID, default: [:]][gameID, default: [:]][entry.player.id] = (gameTotal * 100).rounded() / 100
                 }
                 let lines = feed.lines[entry.player.id] ?? feed.scorer.lines(for: entry.player)
                 feed.lines[entry.player.id] = lines
