@@ -230,6 +230,8 @@ public struct FantasyGameScorer: Sendable {
         var isBlockedExtraPoint: Bool
         /// Who was sacked, on a sack in the end zone parsed as the safety it scored.
         var sackedInEndZone: String?
+        /// The last man to run with it on a run handed off again after a loose ball.
+        var handoffRunner: String?
         /// The passing, rushing or receiving yards the play is worth. See `credited`.
         var gain: Double
 
@@ -245,6 +247,7 @@ public struct FantasyGameScorer: Sendable {
             isBlockedPunt = summary.kind == .punt && text.contains("punt is BLOCKED")
             isBlockedExtraPoint = text.contains("extra point is Blocked")
             sackedInEndZone = summary.kind == .safety ? Rx.sackedPasser(in: text) : nil
+            handoffRunner = summary.kind == .rush ? Rx.handoffRunner(in: text) : nil
         }
     }
 
@@ -374,6 +377,17 @@ public struct FantasyGameScorer: Sendable {
             if matcher.isHim(play.passer) { line.add(FantasyStat.timesSacked) }
         case .safety where onOffense:
             if matcher.isHim(snap.sackedInEndZone) { line.add(FantasyStat.timesSacked) }
+        case .rush where onOffense && snap.handoffRunner != nil:
+            // KC @ SEA: a bad snap fallen on by Mahomes, who ran back 3 and handed it to
+            // Walker for 8. ESPN gave Walker the only carry, worth the play's net yard,
+            // and nobody else a rushing yard.
+            if matcher.isHim(snap.handoffRunner) {
+                line.add(FantasyStat.rushAttempts)
+                line.add(FantasyStat.rushingYards, Double(snap.play.yards))
+                if play.touchdown == .rush || snap.play.scoreKind == .touchdown {
+                    line.add(FantasyStat.rushingTouchdowns)
+                }
+            }
         case .rush where onOffense:
             if matcher.isHim(play.rusher) {
                 line.add(FantasyStat.rushAttempts)
@@ -702,6 +716,18 @@ private enum Rx {
     static let sacked = try! NSRegularExpression(
         pattern: "(?<![A-Za-z.])([A-Z][a-z]{0,2}\\.(?:St\\. |Van )?[A-Z][A-Za-z'\\-]*[A-Za-z]) sacked"
     )
+
+    static let handoff = try! NSRegularExpression(
+        pattern: "Handoff to ([A-Z][a-z]{0,2}\\.(?:St\\. |Van )?[A-Z][A-Za-z'\\-]*[A-Za-z])"
+    )
+
+    /// "…Handoff to K.Walker to SEA 46 for 8 yards" → "K. Walker", the last one named.
+    static func handoffRunner(in text: String) -> String? {
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = handoff.matches(in: text, range: range).last,
+              let name = Range(match.range(at: 1), in: text) else { return nil }
+        return PlaySummary.display(String(text[name]))
+    }
 
     /// "D.Maye sacked in End Zone…" → "D. Maye".
     static func sackedPasser(in text: String) -> String? {

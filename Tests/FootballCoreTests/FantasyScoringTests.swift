@@ -343,6 +343,21 @@ private let patriots = scoringPlayer(-16017, "Patriots", "D/ST", .defense, team:
     #expect(points(johnson, [play]) == [1.2])
 }
 
+/// KC @ SEA, 25 October: a bad snap Mahomes fell on, ran back 3 with and handed to
+/// Walker for 8. ESPN's box score gave Walker the play's only carry, for its net yard,
+/// and Mahomes no rushing line at all.
+@Test func aHandoffAfterALooseBallIsTheLastRunnersCarry() {
+    let kcAtSea = matchup(away: ("12", "KC"), home: ("26", "SEA"))
+    let walker = scoringPlayer(4567048, "Kenneth", "Walker III", .runningBack, team: 12)
+    let mahomes = scoringPlayer(3139477, "Patrick", "Mahomes", .quarterback, team: 12)
+    var play = scoringSnap("ho", "(Shotgun) C.Humphrey to KC 49 for -4 yards. FUMBLES, recovered by KC-P.Mahomes at KC 49. P.Mahomes to KC 46 for -3 yards. Handoff to K.Walker to SEA 46 for 8 yards (L.Williams; J.Jobe).", offense: "12")
+    play.yards = 1
+    #expect(statTotal(FantasyStat.rushAttempts, walker, [play], game: kcAtSea) == 1)
+    #expect(statTotal(FantasyStat.rushingYards, walker, [play], game: kcAtSea) == 1)
+    #expect(statTotal(FantasyStat.rushAttempts, mahomes, [play], game: kcAtSea) == 0)
+    #expect(statTotal(FantasyStat.rushingYards, mahomes, [play], game: kcAtSea) == 0)
+}
+
 @Test func aFumbleLostCostsTheCarrier() {
     let walker = scoringPlayer(4567048, "Kenneth", "Walker III", .runningBack)
     let lost = scoringSnap("f", "K.Walker left end to SEA 30 for 5 yards (C.Gonzalez). FUMBLES (C.Gonzalez), RECOVERED by NE-K.Byard at SEA 30.")
