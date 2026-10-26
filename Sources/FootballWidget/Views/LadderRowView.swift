@@ -263,7 +263,7 @@ struct LadderRowView: View {
         if row.flipsFrame { return "arrow.uturn.left" }
         if row.play.isPenalty { return "flag.slash" }
         switch row.play.typeID {
-        case "5": return "figure.american.football"       // Rush
+        case "5": return "figure.run"                     // Rush
         case "24", "3", "51": return "arrow.up.forward"    // Pass
         case "7": return "xmark.circle"                    // Sack
         case "52": return "arrow.up.to.line"               // Punt
